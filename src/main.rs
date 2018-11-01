@@ -173,7 +173,7 @@ fn socks_connect(
         trace!("try connect to {}", addr);
         TcpStream::connect(&addr).then(move |r| match r {
             Ok(c) => {
-                trace!("connected {}", addr);
+                trace!("connected {:?}", req.address);
                 let CmdRequest { address, port, .. } = req.clone();
                 let resp = CmdResponse::new(Reply::Succeeded, address, port);
                 Ok((stream, c, resp))
@@ -188,7 +188,10 @@ fn socks_connect(
                 let resp = CmdResponse::new(reply, address, port);
                 let f = stream.send(resp).and_then(|_s| Ok(())).map_err(|_| ());
                 tokio::spawn(f);
-                Err(socks_error(format!("connect failed, {:?}", e)))
+                Err(socks_error(format!(
+                    "connect {:?} failed, {:?}",
+                    req.address, e
+                )))
             }
         })
     })
@@ -243,17 +246,14 @@ fn socks_streaming(s1: BytesFramed, s2: BytesFramed) {
     let f1 = b_stream
         .map(|b| b.freeze())
         .forward(a_sink)
-        .map(|_| ())
-        .map_err(|e| error!("streaming error: {:?}", e));
+        .map_err(|e| error!("b->a streaming error: {:?}", e));
 
     let f2 = a_stream
         .map(|b| b.freeze())
         .forward(b_sink)
-        .map(|_| ())
-        .map_err(|e| error!("streaming error: {:?}", e));
+        .map_err(|e| error!("a->b streaming error: {:?}", e));
 
-    tokio::spawn(f1);
-    tokio::spawn(f2);
+    tokio::spawn(f1.join(f2).map(|_| ()));
 }
 
 #[derive(StructOpt, Debug)]
