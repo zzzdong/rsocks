@@ -1,18 +1,18 @@
 [package]
 name = "rsocks"
 version = "0.1.0"
-authors = ["alex <kuwater@163.com>"]
+authors = ["zzzdong <kuwater@163.com>"]
 edition = "2018"
 
 [dependencies]
 bytes = "0.4"
-env_logger = "0.5"
+env_logger = "0.6"
 futures = "0.1"
 failure = "0.1"
-lazy_static = "1.1.0"
+lazy_static = "1.3.0"
 log = "0.4"
 nom = "4.0"
 structopt = "0.2"
 tokio = "0.1"
-tokio-async-await = "0.1.0"
-trust-dns-resolver = "0.10.0"
+tokio-async-await = "0.1.7"
+trust-dns-resolver = "0.11"
