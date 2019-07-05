@@ -1,5 +1,4 @@
-// #![feature(await_macro, async_await, futures_api)]
-// #![recursion_limit = "128"]
+#![recursion_limit = "128"]
 
 #[macro_use]
 extern crate failure;
@@ -150,9 +149,7 @@ fn socks5_cmd(
 
                 // only support TCPConnect
                 match req.command {
-                    Command::TCPConnect => {
-                        future::ok(socks_connect(s, req))
-                    }
+                    Command::TCPConnect => future::ok(socks_connect(s, req)),
                     _ => {
                         let resp = CmdResponse::new(Reply::CommandNotSupported, address, port);
                         let f = s.send(resp).and_then(|_s| Ok(())).map_err(|_| ());
@@ -251,12 +248,12 @@ fn socks_streaming(s1: BytesFramed, s2: BytesFramed) {
     let f1 = b_stream
         .map(|b| b.freeze())
         .forward(a_sink)
-        .map_err(|e| error!("b->a streaming error: {:?}", e));
+        .map_err(|e| error!("remote->local streaming error: {:?}", e));
 
     let f2 = a_stream
         .map(|b| b.freeze())
         .forward(b_sink)
-        .map_err(|e| error!("a->b streaming error: {:?}", e));
+        .map_err(|e| error!("local->remotes streaming error: {:?}", e));
 
     tokio::spawn(f1.join(f2).map(|_| ()));
 }
