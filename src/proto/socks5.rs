@@ -3,8 +3,17 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use bytes::{BufMut, BytesMut};
-use nom::Err;
-use nom::{be_u16, be_u8, count, do_parse, named, tag, IResult};
+// use nom::Err;
+// use nom::{be_u16, be_u8, count, do_parse, named, tag, IResult};
+
+use nom::IResult;
+use nom::{
+    branch::alt,
+    bytes::streaming::{tag, take},
+    character::streaming::one_of,
+    multi::count,
+    number::complete::{be_u16, be_u8},
+};
 
 pub mod consts {
     pub const SOCKS5_ERROR_UNSUPPORTED_VERSION: u32 = 501;
@@ -45,7 +54,7 @@ pub trait WriteBuf {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Version {
     V5,
-    Unknown,
+    Unknown(u8),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -154,11 +163,29 @@ pub enum AddressType {
     Unknown(u8),
 }
 
+impl AddressType {
+    fn from_byte(b: u8) -> AddressType {
+        match b {
+            consts::SOCKS5_ADDR_IPV4 => AddressType::IPv4,
+            consts::SOCKS5_ADDR_IPV6 => AddressType::IPv6,
+            consts::SOCKS5_ADDR_DOMAINNAME => AddressType::Domain,
+            _ => AddressType::Unknown(b),
+        }
+    }
+}
+
+impl From<u8> for AddressType {
+    fn from(t: u8) -> AddressType {
+        AddressType::from_byte(t)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Address {
     IPv4(Ipv4Addr),
     IPv6(Ipv6Addr),
     DomainName(String),
+    Unknown(u8),
 }
 
 impl Address {
@@ -176,6 +203,7 @@ impl Address {
                 buf.extend_from_slice(&[consts::SOCKS5_ADDR_DOMAINNAME, dmname.len() as u8]);
                 buf.extend_from_slice(dmname.as_bytes());
             }
+            Address::Unknown(_t) => {}
         };
     }
 }
@@ -338,31 +366,23 @@ impl WriteBuf for CmdResponse {
     }
 }
 
-named!(pub parse_handshake_request <&[u8], HandshakeRequest>,
-    do_parse!(
-        check_version >>
-        method_count: be_u8 >>
-        methods: count!(be_u8, method_count as usize) >>
-        (
-            HandshakeRequest {
-                methods: methods,
-            }
-        )
-    )
-);
+pub(crate) fn parse_handshake_request(input: &[u8]) -> IResult<&[u8], HandshakeRequest> {
+    let (i, _ver) = check_version(input)?;
+    let (i, method_count) = be_u8(i)?;
+    let (i, methods) = count(be_u8, method_count as usize)(i)?;
 
-named!(pub parse_cmd_request<&[u8], CmdRequest>,
-    do_parse!(
-        check_version >>
-        cmd: request_cmd >>
-        reserver_byte >>
-        addr: read_addr >>
-        port: be_u16 >>
+    Ok((i, HandshakeRequest { methods }))
+}
 
-        (CmdRequest::new(cmd, addr, port))
+pub(crate) fn parse_cmd_request(input: &[u8]) -> IResult<&[u8], CmdRequest> {
+    let (i, _ver) = check_version(input)?;
+    let (i, cmd) = request_cmd(i)?;
+    let (i, _) = reserver_byte(i)?;
+    let (i, addr) = read_addr(i)?;
+    let (i, port) = be_u16(i)?;
 
-    )
-);
+    Ok((i, CmdRequest::new(cmd, addr, port)))
+}
 
 fn request_cmd(input: &[u8]) -> IResult<&[u8], Command> {
     alt!(input,
@@ -373,102 +393,75 @@ fn request_cmd(input: &[u8]) -> IResult<&[u8], Command> {
     )
 }
 
-fn address_type(input: &[u8]) -> IResult<&[u8], AddressType> {
-    alt!(input,
-        tag!([consts::SOCKS5_ADDR_IPV4]) => {|_| AddressType::IPv4} |
-        tag!([consts::SOCKS5_ADDR_DOMAINNAME]) => {|_| AddressType::Domain} |
-        tag!([consts::SOCKS5_ADDR_IPV6]) => {|_| AddressType::IPv6} |
-        be_u8 => {|t| AddressType::Unknown(t) }
-    )
+fn read_ipv4(input: &[u8]) -> IResult<&[u8], Address> {
+    let (i, raw) = take(4usize)(input)?;
+    Ok((
+        i,
+        Address::IPv4(Ipv4Addr::new(raw[0], raw[1], raw[2], raw[3])),
+    ))
 }
 
-named!(read_ipv4<&[u8], Ipv4Addr>,
-    do_parse!(
-        raw: take!(4) >>
-        (Ipv4Addr::new(raw[0], raw[1], raw[2], raw[3]))
-    )
-);
+fn read_ipv6(input: &[u8]) -> IResult<&[u8], Address> {
+    let (i, raw) = count(be_u16, 8)(input)?;
+    Ok((
+        i,
+        Address::IPv6(Ipv6Addr::new(
+            raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+        )),
+    ))
+}
 
-named!(read_ipv6<&[u8], Ipv6Addr>,
-    do_parse!(
-        raw: count!(be_u16, 8) >>
-        (Ipv6Addr::new(raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7]))
-    )
-);
+fn read_domain(input: &[u8]) -> IResult<&[u8], Address> {
+    let (i, len) = be_u8(input)?;
+    let (i, s) = take(len)(i)?;
+    Ok((
+        i,
+        Address::DomainName(String::from_utf8_lossy(s).to_string()),
+    ))
+}
 
-named!(read_domain<&[u8], String>,
-    do_parse!(
-        len: be_u8 >>
-        s: take!(len) >>
-        (String::from_utf8_lossy(s).to_string())
-    )
-);
+fn read_addr_type(i: &[u8]) -> IResult<&[u8], char> {
+    one_of([
+        consts::SOCKS5_ADDR_IPV4,
+        consts::SOCKS5_ADDR_IPV6,
+        consts::SOCKS5_ADDR_DOMAINNAME,
+    ])(i)
+}
 
 fn read_addr(input: &[u8]) -> IResult<&[u8], Address> {
-    match address_type(input) {
-        Ok((i, t)) => {
-            let (consumed, addr) = match t {
-                AddressType::IPv4 => match read_ipv4(i) {
-                    Ok((i, addr)) => (i, Address::IPv4(addr)),
-                    Err(e) => {
-                        return Err(e);
-                    }
-                },
-                AddressType::IPv6 => match read_ipv6(i) {
-                    Ok((i, addr)) => (i, Address::IPv6(addr)),
-                    Err(e) => {
-                        return Err(e);
-                    }
-                },
-                AddressType::Domain => match read_domain(i) {
-                    Ok((i, addr)) => (i, Address::DomainName(addr)),
-                    Err(e) => {
-                        return Err(e);
-                    }
-                },
-                t => {
-                    debug!("unknown address type: {:?}", t);
-                    return Err(Err::Error(nom::Context::Code(
-                        &input[..],
-                        nom::ErrorKind::Custom(consts::SOCKS5_ERROR_UNKNOWN_ADDRTYPE),
-                    )));
-                }
-            };
-            Ok((consumed, addr))
-        }
-        Err(e) => Err(e),
+    let (i, t) = read_addr_type(input)?;
+    let t = AddressType::from_byte(t as u8);
+
+    match t {
+        AddressType::IPv4 => read_ipv4(i),
+        AddressType::IPv6 => read_ipv6(i),
+        AddressType::Domain => read_domain(i),
+        AddressType::Unknown(t) => Ok((i, Address::Unknown(t))),
     }
 }
 
-named!(
-    reserver_byte,
-    add_return_error!(
-        ErrorKind::Custom(consts::SOCKS5_ERROR_RESERVERD),
-        tag!([consts::SOCKS5_RESERVED])
-    )
-);
+fn check_version(input: &[u8]) -> IResult<&[u8], Version> {
+    tag([consts::SOCKS5_VERSION])(input).map(|(i, _v)| (i, Version::V5))
+}
 
-named!(
-    check_version,
-    add_return_error!(
-        ErrorKind::Custom(consts::SOCKS5_ERROR_UNSUPPORTED_VERSION),
-        tag!([consts::SOCKS5_VERSION])
-    )
-);
+fn reserver_byte(input: &[u8]) -> IResult<&[u8], u8> {
+    tag([consts::SOCKS5_RESERVED])(input).map(|(i, b)| (i, b[0]))
+}
 
 fn unknow_cmd(input: &[u8]) -> IResult<&[u8], Command> {
     Ok((input, Command::OtherCommand(input[0])))
 }
 
-fn unknown_version(input: &[u8]) -> IResult<&[u8], Version> {
-    Ok((input, Version::Unknown))
+fn v5_version(input: &[u8]) -> IResult<&[u8], Version> {
+    tag([consts::SOCKS5_VERSION])(input).map(|(i, _v)| (i, Version::V5))
 }
 
-fn socks_version(input: &[u8]) -> IResult<&[u8], Version, u32> {
-    alt!(input,
-        tag!([consts::SOCKS5_VERSION]) => { |_| Version::V5 } |
-        unknown_version
-    )
+fn unknown_version(input: &[u8]) -> IResult<&[u8], Version> {
+    take(1usize)(input).map(|(i, v)| (i, Version::Unknown(v[0])))
+}
+
+fn socks_version(input: &[u8]) -> IResult<&[u8], Version> {
+    alt((v5_version, unknown_version))(input)
 }
 
 #[cfg(test)]
@@ -481,19 +474,21 @@ mod test {
 
         #[test]
         fn correct() {
+            let empty_buf = &vec![][..];
+
             let req_ok = HandshakeRequest::new(vec![SOCKS5_AUTH_METHOD_NONE]);
 
             // correct HandshakeRequest
             let buf = vec![0x05, 0x01, 0x00];
             let req = parse_handshake_request(&buf);
-            assert_eq!(req, Ok((&vec![][..], req_ok)));
+            assert_eq!(req, Ok((empty_buf, req_ok)));
 
             // correct HandshakeRequest
             let req_ok =
                 HandshakeRequest::new(vec![SOCKS5_AUTH_METHOD_NONE, SOCKS5_AUTH_METHOD_PASSWORD]);
             let buf = vec![0x05, 0x02, 0x00, 0x02];
             let req = parse_handshake_request(&buf);
-            assert_eq!(req, Ok((&vec![][..], req_ok)));
+            assert_eq!(req, Ok((empty_buf, req_ok)));
         }
 
         #[test]
@@ -503,446 +498,80 @@ mod test {
             let req = parse_handshake_request(&buf);
             assert_eq!(
                 req,
-                Err(Err::Error(nom::Context::Code(
-                    &buf[..],
-                    nom::ErrorKind::Custom(501)
-                )))
+                Err(nom::Err::Error((&buf[..], nom::error::ErrorKind::Tag)))
             );
         }
 
         #[test]
         fn incorrect_buf_len() {
+            let empty_buf = &vec![][..];
+
             // incorrect buf len
             let buf = vec![0x05, 0x01];
             let req = parse_handshake_request(&buf);
-            assert_eq!(req, Err(nom::Err::Incomplete(nom::Needed::Size(1))));
+            assert_eq!(
+                req,
+                Err(nom::Err::Error((empty_buf, nom::error::ErrorKind::Eof)))
+            );
 
             let buf = vec![0x05, 0x05, 0x01];
             let req = parse_handshake_request(&buf);
-            assert_eq!(req, Err(nom::Err::Incomplete(nom::Needed::Size(1))));
+            assert_eq!(
+                req,
+                Err(nom::Err::Error((empty_buf, nom::error::ErrorKind::Eof)))
+            );
         }
     }
 
+    mod tcprequesthdr {
+        use super::*;
+
+        #[test]
+        fn correct() {
+            let empty_buf = &vec![][..];
+
+            let req_ok = CmdRequest::new(
+                Command::TCPConnect,
+                Address::IPv4("127.0.0.1".parse().unwrap()),
+                1080 as u16,
+            );
+            let buf = vec![0x05, 0x01, 0x00, 0x01, 0x7f, 0x00, 0x00, 0x01, 0x04, 0x38];
+            let req = parse_cmd_request(&buf);
+            assert_eq!(req, Ok((empty_buf, req_ok)));
+
+            let req_ok = CmdRequest::new(
+                Command::TCPConnect,
+                Address::IPv6("2001:0DB8:AC10:FE01::".parse().unwrap()),
+                1080 as u16,
+            );
+            let buf = vec![
+                0x05, 0x01, 0x00, 0x04, 0x20, 0x01, 0x0d, 0xb8, 0xac, 0x10, 0xfe, 0x01, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x38,
+            ];
+            let req = parse_cmd_request(&buf);
+            assert_eq!(req, Ok((empty_buf, req_ok)));
+
+            let req_ok = CmdRequest::new(
+                Command::TCPConnect,
+                Address::DomainName("www.google.com".to_string()),
+                1080 as u16,
+            );
+            let buf = vec![
+                0x05, 0x01, 0x00, 0x03, 0x0e, 0x77, 0x77, 0x77, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c,
+                0x65, 0x2e, 0x63, 0x6f, 0x6d, 0x04, 0x38,
+            ];
+            let req = parse_cmd_request(&buf);
+            assert_eq!(req, Ok((empty_buf, req_ok)));
+        }
+
+        #[test]
+        fn incorrect_addr_type() {
+            let buf = vec![0x05, 0x01, 0x00, 0x02, 0x7f, 0x00, 0x00, 0x01, 0x04, 0x38];
+            let req = parse_cmd_request(&buf);
+            assert_eq!(
+                req,
+                Err(nom::Err::Error((&buf[3..], nom::error::ErrorKind::OneOf)))
+            );
+        }
+    }
 }
-
-// #[cfg(test)]
-// mod test {
-//     use super::*;
-
-//     mod handshakereq {
-//         use super::*;
-//         #[test]
-//         fn correct() {
-//             let req_ok = HandshakeRequest::new(vec![0x02]);
-
-//             // correct HandshakeRequest
-//             let mut buf = BytesMut::from(vec![0x05, 0x01, 0x02]);
-//             let req = HandshakeRequest::read_from(&mut buf).unwrap();
-//             assert_eq!(req_ok, req);
-//         }
-
-//         #[test]
-//         fn incorrect_socks_verion() {
-//             // incorrect socks version
-//             let mut buf = BytesMut::from(vec![0x04, 0x01, 0x02]);
-//             let req = HandshakeRequest::read_from(&mut buf);
-//             assert!(req.is_err());
-//         }
-
-//         #[test]
-//         fn incorrect_buf_len() {
-//             // incorrect buf len
-//             let mut buf = BytesMut::from(vec![0x05, 0x01]);
-//             let req = HandshakeRequest::read_from(&mut buf);
-//             assert!(req.is_err());
-
-//             let mut buf = BytesMut::from(vec![0x05, 0x02, 0x01]);
-//             let req = HandshakeRequest::read_from(&mut buf);
-//             assert!(req.is_err());
-//         }
-
-//         #[test]
-//         fn write() {
-//             let req_ok = HandshakeRequest::new(vec![0x02]);
-//             let mut buf = BytesMut::new();
-//             req_ok.write_to(&mut buf);
-
-//             assert_eq!(buf.to_vec(), vec![0x05, 0x01, 0x02]);
-//         }
-//     }
-
-//     mod handshakeresp {
-//         use super::*;
-
-//         #[test]
-//         fn correct() {
-//             let resp_ok = HandshakeResponse::new(0x02);
-//             let mut buf = BytesMut::from(vec![0x05, 0x02]);
-//             let resp = HandshakeResponse::read_from(&mut buf).unwrap();
-//             assert_eq!(resp_ok, resp);
-//         }
-
-//         #[test]
-//         fn incorrect_buf_len() {
-//             let mut buf = BytesMut::from(vec![0x05]);
-//             let resp = HandshakeResponse::read_from(&mut buf);
-//             assert!(resp.is_err());
-//         }
-
-//         #[test]
-//         fn write() {
-//             let resp_ok = HandshakeResponse::new(0x02);
-//             let mut buf = BytesMut::new();
-//             resp_ok.write_to(&mut buf);
-//             assert_eq!(buf, vec![0x05, 0x02]);
-//         }
-//     }
-
-//     mod tcprequesthdr {
-//         use super::*;
-
-//         #[test]
-//         fn correct() {
-//             let req_ok = TcpRequestHeader::new(
-//                 Command::TCPConnect,
-//                 Address::IPAddr(IpAddr::V4("127.0.0.1".parse().unwrap())),
-//                 1080 as u16,
-//             );
-//             let mut buf = BytesMut::from(vec![
-//                 0x05,
-//                 0x01,
-//                 0x00,
-//                 0x01,
-//                 0x7f,
-//                 0x00,
-//                 0x00,
-//                 0x01,
-//                 0x04,
-//                 0x38,
-//             ]);
-//             let req = TcpRequestHeader::read_from(&mut buf).unwrap();
-//             assert_eq!(req_ok, req);
-
-//             let req_ok = TcpRequestHeader::new(
-//                 Command::TCPConnect,
-//                 Address::IPAddr(IpAddr::V6("2001:0DB8:AC10:FE01::".parse().unwrap())),
-//                 1080 as u16,
-//             );
-//             let mut buf = BytesMut::from(vec![
-//                 0x05,
-//                 0x01,
-//                 0x00,
-//                 0x04,
-//                 0x20,
-//                 0x01,
-//                 0x0d,
-//                 0xb8,
-//                 0xac,
-//                 0x10,
-//                 0xfe,
-//                 0x01,
-//                 0x00,
-//                 0x00,
-//                 0x00,
-//                 0x00,
-//                 0x00,
-//                 0x00,
-//                 0x00,
-//                 0x00,
-//                 0x04,
-//                 0x38,
-//             ]);
-//             let req = TcpRequestHeader::read_from(&mut buf).unwrap();
-//             assert_eq!(req_ok, req);
-
-//             let req_ok = TcpRequestHeader::new(
-//                 Command::TCPConnect,
-//                 Address::DomainAddr("www.google.com".to_string()),
-//                 1080 as u16,
-//             );
-//             let mut buf = BytesMut::from(vec![
-//                 0x05,
-//                 0x01,
-//                 0x00,
-//                 0x03,
-//                 0x0e,
-//                 0x77,
-//                 0x77,
-//                 0x77,
-//                 0x2e,
-//                 0x67,
-//                 0x6f,
-//                 0x6f,
-//                 0x67,
-//                 0x6c,
-//                 0x65,
-//                 0x2e,
-//                 0x63,
-//                 0x6f,
-//                 0x6d,
-//                 0x04,
-//                 0x38,
-//             ]);
-//             let req = TcpRequestHeader::read_from(&mut buf).unwrap();
-//             assert_eq!(req_ok, req);
-//         }
-
-//         #[test]
-//         fn write() {
-//             let req_ok = TcpRequestHeader::new(
-//                 Command::TCPConnect,
-//                 Address::IPAddr(IpAddr::V4("127.0.0.1".parse().unwrap())),
-//                 1080 as u16,
-//             );
-//             let mut buf = BytesMut::new();
-//             req_ok.write_to(&mut buf);
-//             assert_eq!(
-//                 buf,
-//                 vec![0x05, 0x01, 0x00, 0x01, 0x7f, 0x00, 0x00, 0x01, 0x04, 0x38]
-//             );
-
-//             let req_ok = TcpRequestHeader::new(
-//                 Command::TCPConnect,
-//                 Address::IPAddr(IpAddr::V6("2001:0DB8:AC10:FE01::".parse().unwrap())),
-//                 1080 as u16,
-//             );
-//             let mut buf = BytesMut::new();
-//             req_ok.write_to(&mut buf);
-//             assert_eq!(
-//                 buf,
-//                 vec![
-//                     0x05,
-//                     0x01,
-//                     0x00,
-//                     0x04,
-//                     0x20,
-//                     0x01,
-//                     0x0d,
-//                     0xb8,
-//                     0xac,
-//                     0x10,
-//                     0xfe,
-//                     0x01,
-//                     0x00,
-//                     0x00,
-//                     0x00,
-//                     0x00,
-//                     0x00,
-//                     0x00,
-//                     0x00,
-//                     0x00,
-//                     0x04,
-//                     0x38,
-//                 ]
-//             );
-
-//             let req_ok = TcpRequestHeader::new(
-//                 Command::TCPConnect,
-//                 Address::DomainAddr("www.google.com".to_string()),
-//                 1080 as u16,
-//             );
-//             let mut buf = BytesMut::new();
-//             req_ok.write_to(&mut buf);
-//             assert_eq!(
-//                 buf,
-//                 vec![
-//                     0x05,
-//                     0x01,
-//                     0x00,
-//                     0x03,
-//                     0x0e,
-//                     0x77,
-//                     0x77,
-//                     0x77,
-//                     0x2e,
-//                     0x67,
-//                     0x6f,
-//                     0x6f,
-//                     0x67,
-//                     0x6c,
-//                     0x65,
-//                     0x2e,
-//                     0x63,
-//                     0x6f,
-//                     0x6d,
-//                     0x04,
-//                     0x38,
-//                 ]
-//             );
-//         }
-//     }
-
-//     mod tcpresponsehdr {
-//         use super::*;
-
-//         #[test]
-//         fn correct() {
-//             let req_ok = TcpResponseHeader::new(
-//                 Reply::Succeeded,
-//                 Address::IPAddr(IpAddr::V4("127.0.0.1".parse().unwrap())),
-//                 1080 as u16,
-//             );
-//             let mut buf = BytesMut::from(vec![
-//                 0x05,
-//                 0x00,
-//                 0x00,
-//                 0x01,
-//                 0x7f,
-//                 0x00,
-//                 0x00,
-//                 0x01,
-//                 0x04,
-//                 0x38,
-//             ]);
-//             let req = TcpResponseHeader::read_from(&mut buf).unwrap();
-//             assert_eq!(req_ok, req);
-
-//             let req_ok = TcpResponseHeader::new(
-//                 Reply::GeneralFailure,
-//                 Address::IPAddr(IpAddr::V6("2001:0DB8:AC10:FE01::".parse().unwrap())),
-//                 1080 as u16,
-//             );
-//             let mut buf = BytesMut::from(vec![
-//                 0x05,
-//                 0x01,
-//                 0x00,
-//                 0x04,
-//                 0x20,
-//                 0x01,
-//                 0x0d,
-//                 0xb8,
-//                 0xac,
-//                 0x10,
-//                 0xfe,
-//                 0x01,
-//                 0x00,
-//                 0x00,
-//                 0x00,
-//                 0x00,
-//                 0x00,
-//                 0x00,
-//                 0x00,
-//                 0x00,
-//                 0x04,
-//                 0x38,
-//             ]);
-//             let req = TcpResponseHeader::read_from(&mut buf).unwrap();
-//             assert_eq!(req_ok, req);
-
-//             let req_ok = TcpResponseHeader::new(
-//                 Reply::HostUnreachable,
-//                 Address::DomainAddr("www.google.com".to_string()),
-//                 1080 as u16,
-//             );
-//             let mut buf = BytesMut::from(vec![
-//                 0x05,
-//                 0x04,
-//                 0x00,
-//                 0x03,
-//                 0x0e,
-//                 0x77,
-//                 0x77,
-//                 0x77,
-//                 0x2e,
-//                 0x67,
-//                 0x6f,
-//                 0x6f,
-//                 0x67,
-//                 0x6c,
-//                 0x65,
-//                 0x2e,
-//                 0x63,
-//                 0x6f,
-//                 0x6d,
-//                 0x04,
-//                 0x38,
-//             ]);
-//             let req = TcpResponseHeader::read_from(&mut buf).unwrap();
-//             assert_eq!(req_ok, req);
-//         }
-
-//         #[test]
-//         fn write() {
-//             let req_ok = TcpResponseHeader::new(
-//                 Reply::Succeeded,
-//                 Address::IPAddr(IpAddr::V4("127.0.0.1".parse().unwrap())),
-//                 1080 as u16,
-//             );
-//             let mut buf = BytesMut::new();
-//             req_ok.write_to(&mut buf);
-//             assert_eq!(
-//                 buf,
-//                 vec![0x05, 0x00, 0x00, 0x01, 0x7f, 0x00, 0x00, 0x01, 0x04, 0x38]
-//             );
-
-//             let req_ok = TcpResponseHeader::new(
-//                 Reply::ConnectionRefused,
-//                 Address::IPAddr(IpAddr::V6("2001:0DB8:AC10:FE01::".parse().unwrap())),
-//                 1080 as u16,
-//             );
-//             let mut buf = BytesMut::new();
-//             req_ok.write_to(&mut buf);
-//             assert_eq!(
-//                 buf,
-//                 vec![
-//                     0x05,
-//                     0x05,
-//                     0x00,
-//                     0x04,
-//                     0x20,
-//                     0x01,
-//                     0x0d,
-//                     0xb8,
-//                     0xac,
-//                     0x10,
-//                     0xfe,
-//                     0x01,
-//                     0x00,
-//                     0x00,
-//                     0x00,
-//                     0x00,
-//                     0x00,
-//                     0x00,
-//                     0x00,
-//                     0x00,
-//                     0x04,
-//                     0x38,
-//                 ]
-//             );
-
-//             let req_ok = TcpResponseHeader::new(
-//                 Reply::NetworkUnreadchable,
-//                 Address::DomainAddr("www.google.com".to_string()),
-//                 1080 as u16,
-//             );
-//             let mut buf = BytesMut::new();
-//             req_ok.write_to(&mut buf);
-//             assert_eq!(
-//                 buf,
-//                 vec![
-//                     0x05,
-//                     0x03,
-//                     0x00,
-//                     0x03,
-//                     0x0e,
-//                     0x77,
-//                     0x77,
-//                     0x77,
-//                     0x2e,
-//                     0x67,
-//                     0x6f,
-//                     0x6f,
-//                     0x67,
-//                     0x6c,
-//                     0x65,
-//                     0x2e,
-//                     0x63,
-//                     0x6f,
-//                     0x6d,
-//                     0x04,
-//                     0x38,
-//                 ]
-//             );
-//         }
-//     }
-// }

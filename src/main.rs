@@ -1,5 +1,5 @@
-#![feature(await_macro, async_await, futures_api)]
-#![recursion_limit = "128"]
+// #![feature(await_macro, async_await, futures_api)]
+// #![recursion_limit = "128"]
 
 #[macro_use]
 extern crate failure;
@@ -14,7 +14,6 @@ use log::LevelFilter;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 
-use env_logger::Builder;
 use futures::future::Either;
 
 use structopt::StructOpt;
@@ -63,7 +62,7 @@ lazy_static! {
                 #[cfg(any(unix, windows))]
                 {
                     // use the system resolver configuration
-                    AsyncResolver::from_system_conf().expect("Failed to create ResolverFuture")
+                    AsyncResolver::from_system_conf().expect("Failed to create AsyncResolver")
                 }
 
                 // For other operating systems, we can use one of the preconfigured definitions
@@ -148,14 +147,18 @@ fn socks5_cmd(
             Some(req) => {
                 debug!("cmd request: {:?} from {:?}", req, s);
                 let CmdRequest { address, port, .. } = req.clone();
+
                 // only support TCPConnect
-                if req.command == Command::TCPConnect {
-                    future::ok(socks_connect(s, req))
-                } else {
-                    let resp = CmdResponse::new(Reply::CommandNotSupported, address, port);
-                    let f = s.send(resp).and_then(|_s| Ok(())).map_err(|_| ());
-                    tokio::spawn(f);
-                    future::err(socks_error("command not support"))
+                match req.command {
+                    Command::TCPConnect => {
+                        future::ok(socks_connect(s, req))
+                    }
+                    _ => {
+                        let resp = CmdResponse::new(Reply::CommandNotSupported, address, port);
+                        let f = s.send(resp).and_then(|_s| Ok(())).map_err(|_| ());
+                        tokio::spawn(f);
+                        future::err(socks_error("command not support"))
+                    }
                 }
             }
             None => future::err(socks_error("read request failed")),
@@ -171,6 +174,7 @@ fn socks_connect(
     resolve_addr(&req).and_then(move |a| {
         let addr = SocketAddr::new(a, req.port);
         trace!("try connect to {}", addr);
+
         TcpStream::connect(&addr).then(move |r| match r {
             Ok(c) => {
                 trace!("connected {:?}", req.address);
@@ -203,6 +207,7 @@ fn resolve_addr(req: &CmdRequest) -> impl Future<Item = IpAddr, Error = RsocksEr
         Address::IPv4(ip) => Either::A(future::ok(IpAddr::V4(ip))),
         Address::IPv6(ip) => Either::A(future::ok(IpAddr::V6(ip))),
         Address::DomainName(ref dn) => Either::B(dns_resolve(dn.as_str())),
+        Address::Unknown(_t) => Either::A(future::err(socks_error("bad address"))),
     }
 }
 
@@ -270,7 +275,7 @@ struct Opt {
 fn main() {
     let opt = Opt::from_args();
 
-    let mut builder = Builder::new();
+    let mut builder = env_logger::Builder::new();
 
     let level = match opt.verbose {
         0 => LevelFilter::Warn,
