@@ -6,7 +6,6 @@ use nom::number::complete::{be_u16, be_u32, be_u8};
 use nom::sequence::tuple;
 use nom::{Err, IResult};
 
-use crate::dns_resolver::error::*;
 use crate::dns_resolver::proto::*;
 use crate::errors::RsocksError;
 
@@ -144,7 +143,10 @@ fn parse_resource_record<'a>(
     Ok((input, rr))
 }
 
-fn parse_domain_name_labels<'a>(input: &'a [u8], packet: &'a [u8]) -> IResult<&'a [u8], Vec<&'a [u8]>> {
+fn parse_domain_name_labels<'a>(
+    input: &'a [u8],
+    packet: &'a [u8],
+) -> IResult<&'a [u8], Vec<&'a [u8]>> {
     let mut rest = input;
     let mut parts = Vec::new();
 
@@ -175,13 +177,13 @@ fn parse_domain_name_labels<'a>(input: &'a [u8], packet: &'a [u8]) -> IResult<&'
 fn parse_domain_name<'a>(input: &'a [u8], packet: &'a [u8]) -> IResult<&'a [u8], String> {
     let (input, labels) = parse_domain_name_labels(input, packet)?;
 
-    let labels: Vec<std::borrow::Cow<'_, str>> = labels.iter().map(|l|String::from_utf8_lossy(l)).collect();
+    let labels: Vec<std::borrow::Cow<'_, str>> =
+        labels.iter().map(|l| String::from_utf8_lossy(l)).collect();
 
     let domain = labels.join(".");
 
     Ok((input, domain))
 }
-
 
 fn parse_message(input: &[u8]) -> IResult<&[u8], Message> {
     let packet = input;

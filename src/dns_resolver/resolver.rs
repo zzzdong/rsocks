@@ -11,6 +11,10 @@ use crate::errors::RsocksError;
 
 const MAX_DATAGRAM_SIZE: usize = 65_507;
 
+use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
+
+static GLOBAL_DNS_QUERY_COUNT: AtomicU16 = AtomicU16::new(0);
+
 pub async fn dns_query(domain: &str) -> Result<IpAddr, RsocksError> {
     let remote_addr: SocketAddr = "114.114.114.114:53".parse().unwrap();
     // let remote_addr: SocketAddr = "182.254.116.116:53".parse().unwrap();
@@ -20,9 +24,11 @@ pub async fn dns_query(domain: &str) -> Result<IpAddr, RsocksError> {
 
     let mut socket = UdpSocket::bind(&local_addr).unwrap();
 
+    let curr_query_count = GLOBAL_DNS_QUERY_COUNT.fetch_add(1, Ordering::SeqCst);
+
     socket.connect(&remote_addr).unwrap();
 
-    let msg = Message::new_query(114, domain);
+    let msg = Message::new_query(curr_query_count, domain);
 
     let data = msg.to_bytes().freeze();
 

@@ -385,12 +385,15 @@ pub(crate) fn parse_cmd_request(input: &[u8]) -> IResult<&[u8], CmdRequest> {
 }
 
 fn request_cmd(input: &[u8]) -> IResult<&[u8], Command> {
-    alt!(input,
-        tag!([consts::SOCKS5_CMD_TCP_CONNECT]) => {|_| Command::TCPConnect} |
-        tag!([consts::SOCKS5_CMD_TCP_BIND]) => {|_| Command::TCPBind} |
-        tag!([consts::SOCKS5_CMD_UDP_ASSOCIATE]) => {|_| Command::UDPAssociate} |
-        be_u8 => {|c| Command::OtherCommand(c)}
-    )
+    let (input, cmd) = take(1usize)(input)?;
+    let cmd = match cmd[0] {
+        consts::SOCKS5_CMD_TCP_CONNECT => Command::TCPConnect,
+        consts::SOCKS5_CMD_TCP_BIND =>  Command::TCPBind,
+        consts::SOCKS5_CMD_UDP_ASSOCIATE => Command::UDPAssociate,
+        c =>  Command::OtherCommand(c),
+    };
+
+    Ok((input, cmd))
 }
 
 fn read_ipv4(input: &[u8]) -> IResult<&[u8], Address> {

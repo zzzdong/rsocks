@@ -1,4 +1,5 @@
-pub mod resolver;
+mod resolver;
 mod proto;
 mod parser;
-mod error;
+
+pub use resolver::dns_query;
