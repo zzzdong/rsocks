@@ -10,6 +10,10 @@ pub enum RsocksError {
     ResolveError {
         error: trust_dns_resolver::error::ResolveError,
     },
+    #[fail(display = "DNS resolve error: {}", msg)]
+    DNSError {
+         msg: String ,
+    },
 }
 
 pub fn parser_error(msg: impl ToString) -> RsocksError {
