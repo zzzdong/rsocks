@@ -6,8 +6,8 @@ use nom::number::complete::{be_u16, be_u32, be_u8};
 use nom::sequence::tuple;
 use nom::{Err, IResult};
 
-use crate::dns_resolver::proto::*;
 use crate::errors::RsocksError;
+use crate::proto::dns::*;
 
 fn bit_flag(b: u8) -> bool {
     b != 0
@@ -185,7 +185,7 @@ fn parse_domain_name<'a>(input: &'a [u8], packet: &'a [u8]) -> IResult<&'a [u8],
     Ok((input, domain))
 }
 
-fn parse_message(input: &[u8]) -> IResult<&[u8], Message> {
+pub fn parse_message(input: &[u8]) -> IResult<&[u8], Message> {
     let packet = input;
     let mut rest: &[u8];
 

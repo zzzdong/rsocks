@@ -21,6 +21,7 @@ use tokio::net::{TcpListener, TcpStream};
 mod codecs;
 mod dns_resolver;
 mod errors;
+mod parser;
 mod proto;
 
 use crate::codecs::socks5::*;

@@ -3,6 +3,7 @@ use nom::Offset;
 use tokio::codec::*;
 
 use crate::errors::*;
+use crate::parser::socks5::*;
 use crate::proto::socks5::*;
 
 use crate::proto::socks5::WriteBuf;

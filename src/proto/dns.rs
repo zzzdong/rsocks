@@ -1,8 +1,10 @@
+#![allow(dead_code)]
+
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use bytes::{Bytes, BytesMut, Buf, BufMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-// use crate::error::Error;
+use crate::errors::RsocksError;
 
 pub mod consts {
     pub const DNS_QR_QUERY: u8 = 0;
@@ -106,6 +108,14 @@ impl Message {
         }
     }
 
+    pub fn write_buf(&self, buf: &mut BytesMut) {
+        buf.put(self.header.to_bytes());
+
+        for q in &self.question {
+            q.write_buf(buf);
+        }
+    }
+
     pub fn to_bytes(&self) -> BytesMut {
         let mut buf = BytesMut::with_capacity(512);
 
@@ -148,7 +158,6 @@ impl Header {
             ar_count: 0,
         }
     }
-    
     pub fn to_bytes(&self) -> BytesMut {
         let mut buf = BytesMut::with_capacity(12);
 
@@ -319,7 +328,6 @@ impl Question {
 
     pub fn to_bytes(&self) -> BytesMut {
         let mut buf = BytesMut::new();
-        
         write_domain_name(&mut buf, &self.qname);
         buf.put_u16_be(1);
         buf.put_u16_be(1);
@@ -344,7 +352,6 @@ pub fn write_domain_name(buf: &mut BytesMut, domain: &str) {
 
     buf.put(0u8);
 }
-
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum QType {
