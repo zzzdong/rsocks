@@ -114,7 +114,7 @@ fn parse_resource_record<'a>(
             ip.copy_from_slice(buf);
             RDATA::A(Ipv4Addr::from(ip))
         }
-        QType::AAA => {
+        QType::AAAA => {
             let (_, buf) = take_bytes(16usize)(rdata)?;
             let mut ip: [u8; 16] = Default::default();
             ip.copy_from_slice(buf);

@@ -5,8 +5,7 @@ use tokio::codec::*;
 use crate::errors::*;
 use crate::parser::socks5::*;
 use crate::proto::socks5::*;
-
-use crate::proto::socks5::WriteBuf;
+use crate::proto::WriteBuf;
 
 #[derive(Debug)]
 pub struct HandshakeCodec;

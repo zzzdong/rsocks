@@ -4,6 +4,7 @@ use tokio::codec::*;
 use crate::errors::{parser_error, RsocksError};
 use crate::parser::dns::*;
 use crate::proto::dns::Message;
+use crate::proto::WriteBuf;
 
 #[derive(Debug)]
 pub struct MessageCodec;
@@ -14,8 +15,8 @@ impl Decoder for MessageCodec {
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Message>, RsocksError> {
         match parse_message(buf) {
-            Ok((i, msg)) => Ok(Some(msg)),
-            Err(e) => Err(parser_error("parse_message")),
+            Ok((_i, msg)) => Ok(Some(msg)),
+            Err(e) => Err(parser_error(format!("parse_message, {:?}", e))),
         }
     }
 }

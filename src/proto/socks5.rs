@@ -4,6 +4,8 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 use bytes::{BufMut, BytesMut};
 
+use crate::proto::WriteBuf;
+
 pub mod consts {
     pub const SOCKS5_ERROR_UNSUPPORTED_VERSION: u32 = 501;
     pub const SOCKS5_ERROR_RESERVERD: u32 = 502;
@@ -34,10 +36,6 @@ pub mod consts {
     pub const SOCKS5_REPLY_TTL_EXPIRED: u8 = 0x06;
     pub const SOCKS5_REPLY_COMMAND_NOT_SUPPORTED: u8 = 0x07;
     pub const SOCKS5_REPLY_ADDRESS_TYPE_NOT_SUPPORTED: u8 = 0x08;
-}
-
-pub trait WriteBuf {
-    fn write_buf(&self, buf: &mut BytesMut);
 }
 
 #[derive(Clone, Debug, PartialEq)]

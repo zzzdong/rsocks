@@ -6,10 +6,6 @@ pub enum RsocksError {
     IoError { error: std::io::Error },
     #[fail(display = "Socks error: {}", msg)]
     SocksError { msg: String },
-    #[fail(display = "Resolve error: {}", error)]
-    ResolveError {
-        error: trust_dns_resolver::error::ResolveError,
-    },
     #[fail(display = "Timeout error: {}", error)]
     TimeoutError {
         error: tokio::timer::timeout::Elapsed,
@@ -33,12 +29,6 @@ pub fn socks_error(msg: impl ToString) -> RsocksError {
 impl From<std::io::Error> for RsocksError {
     fn from(err: std::io::Error) -> RsocksError {
         RsocksError::IoError { error: err }
-    }
-}
-
-impl From<trust_dns_resolver::error::ResolveError> for RsocksError {
-    fn from(err: trust_dns_resolver::error::ResolveError) -> RsocksError {
-        RsocksError::ResolveError { error: err }
     }
 }
 

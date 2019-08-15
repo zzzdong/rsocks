@@ -2,9 +2,9 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
 
-use crate::errors::RsocksError;
+use crate::proto::WriteBuf;
 
 pub mod consts {
     pub const DNS_QR_QUERY: u8 = 0;
@@ -71,6 +71,26 @@ const QTYPE_TABLE_1: [QType; 17] = [
 
 const QTYPE_TABLE_2: [QType; 4] = [QType::AXFR, QType::MAILB, QType::MAILA, QType::ALL];
 
+const QTYPE_U16_TABLE__1: [QType; 17] = [
+    QType::Unknown(0),
+    QType::A,
+    QType::NS,
+    QType::MD,
+    QType::MF,
+    QType::CNAME,
+    QType::SOA,
+    QType::MB,
+    QType::MG,
+    QType::MR,
+    QType::NULL,
+    QType::WKS,
+    QType::PTR,
+    QType::HINFO,
+    QType::MINFO,
+    QType::MX,
+    QType::TXT,
+];
+
 const QCLASS_TABLE_1: [QClass; 5] = [
     QClass::Unknown(0),
     QClass::IN,
@@ -108,24 +128,18 @@ impl Message {
         }
     }
 
-    pub fn write_buf(&self, buf: &mut BytesMut) {
+    fn write_to(&self, buf: &mut BytesMut) {
         buf.put(self.header.to_bytes());
 
         for q in &self.question {
             q.write_buf(buf);
         }
     }
+}
 
-    pub fn to_bytes(&self) -> BytesMut {
-        let mut buf = BytesMut::with_capacity(512);
-
-        buf.put(self.header.to_bytes());
-
-        for q in &self.question {
-            q.write_buf(&mut buf);
-        }
-
-        buf
+impl WriteBuf for Message {
+    fn write_buf(&self, buf: &mut BytesMut) {
+        self.write_to(buf);
     }
 }
 
@@ -326,19 +340,16 @@ impl Question {
         }
     }
 
-    pub fn to_bytes(&self) -> BytesMut {
-        let mut buf = BytesMut::new();
-        write_domain_name(&mut buf, &self.qname);
-        buf.put_u16_be(1);
-        buf.put_u16_be(1);
-
-        buf
-    }
-
-    pub fn write_buf(&self, buf: &mut BytesMut) {
+    pub fn write_to(&self, buf: &mut BytesMut) {
         write_domain_name(buf, &self.qname);
-        buf.put_u16_be(1);
-        buf.put_u16_be(1);
+        buf.put_u16_be(u16::from(self.qtype));
+        buf.put_u16_be(u16::from(self.qclass));
+    }
+}
+
+impl WriteBuf for Question {
+    fn write_buf(&self, buf: &mut BytesMut) {
+        self.write_to(buf);
     }
 }
 
@@ -375,7 +386,7 @@ pub enum QType {
     MAILB,
     MAILA,
     ALL,
-    AAA, // 28, IPv6
+    AAAA, // 28, IPv6
     Unknown(u16),
 }
 
@@ -383,20 +394,27 @@ impl QType {
     pub fn from_u16(t: u16) -> QType {
         match t {
             1..=16 => QTYPE_TABLE_1[t as usize],
-            28 => QType::AAA,
+            28 => QType::AAAA,
             252..=255 => QTYPE_TABLE_2[(t - 252) as usize],
             _ => QType::Unknown(t),
         }
     }
-
-    // pub fn as_u16(&self) -> u16 {
-
-    // }
 }
 
 impl From<u16> for QType {
     fn from(t: u16) -> Self {
         QType::from_u16(t)
+    }
+}
+
+impl From<QType> for u16 {
+    fn from(t: QType) -> Self {
+        match t {
+            QType::A => 1,
+            QType::AAAA => 28,
+            // TODO: add missing
+            _ => 255,
+        }
     }
 }
 
@@ -423,6 +441,19 @@ impl QClass {
 impl From<u16> for QClass {
     fn from(c: u16) -> Self {
         QClass::from_u16(c)
+    }
+}
+
+impl From<QClass> for u16 {
+    fn from(c: QClass) -> Self {
+        match c {
+            IN => 1,
+            CS => 2,
+            CH => 3,
+            HS => 4,
+            ANY => 5,
+            QClass::Unknown(code) => code,
+        }
     }
 }
 
