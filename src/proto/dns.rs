@@ -410,10 +410,28 @@ impl From<u16> for QType {
 impl From<QType> for u16 {
     fn from(t: QType) -> Self {
         match t {
-            QType::A => 1,
-            QType::AAAA => 28,
-            // TODO: add missing
-            _ => 255,
+    QType::A => 1,
+    QType::NS => 2,
+    QType::MD => 3,
+    QType::MF => 4,
+    QType::CNAME => 5,
+    QType::SOA => 6,
+    QType::MB => 7,
+    QType::MG => 8,
+    QType::MR => 9,
+    QType::NULL => 10,
+    QType::WKS => 11,
+    QType::PTR => 12,
+    QType::HINFO => 13,
+    QType::MINFO => 14,
+    QType::MX => 15,
+    QType::TXT => 16,
+    QType::AXFR => 252,
+    QType::MAILB => 253,
+    QType::MAILA => 254,
+    QType::ALL => 255,
+    QType::AAAA => 28, // 28, IPv6
+    QType::Unknown(code) => code,
         }
     }
 }
@@ -447,11 +465,11 @@ impl From<u16> for QClass {
 impl From<QClass> for u16 {
     fn from(c: QClass) -> Self {
         match c {
-            IN => 1,
-            CS => 2,
-            CH => 3,
-            HS => 4,
-            ANY => 5,
+            QClass::IN => 1,
+            QClass::CS => 2,
+            QClass::CH => 3,
+            QClass::HS => 4,
+            QClass::ANY => 5,
             QClass::Unknown(code) => code,
         }
     }

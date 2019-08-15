@@ -111,7 +111,7 @@ async fn socks_connect(
     let addr = resolve_addr(&req).await?;
 
     let addr = SocketAddr::new(addr, req.port);
-    trace!("try connect to {}", addr);
+    trace!("try connect to {}({:?})", addr, &req.address);
 
     let socket = TcpStream::connect(&addr).await;
     match socket {
