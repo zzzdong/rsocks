@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use nom::IResult;

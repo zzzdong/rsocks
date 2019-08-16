@@ -1,10 +1,12 @@
+#![allow(dead_code)]
+
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use nom::bits::{bits, bytes, complete::take as take_bits};
+use nom::bits::{bits, complete::take as take_bits};
 use nom::bytes::complete::take as take_bytes;
 use nom::number::complete::{be_u16, be_u32, be_u8};
 use nom::sequence::tuple;
-use nom::{Err, IResult};
+use nom::IResult;
 
 use crate::errors::RsocksError;
 use crate::proto::dns::*;
@@ -244,7 +246,7 @@ mod test {
         ];
 
         let (input, header) = parse_header(&packet).unwrap();
-        let (input, question) = parse_question_section(input, &packet).unwrap();
+        let (_input, question) = parse_question_section(input, &packet).unwrap();
 
         let question_ok = Question::new("xxxgo.cc".to_string(), QType::A, QClass::IN);
 

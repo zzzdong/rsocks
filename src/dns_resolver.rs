@@ -1,5 +1,5 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
+use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
 use tokio::net::UdpFramed;
@@ -22,7 +22,7 @@ pub async fn dns_query(domain: &str) -> Result<IpAddr, RsocksError> {
     // let remote_addr: SocketAddr = "1.1.1.1:53".parse().unwrap();
     let local_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
 
-    let socket = UdpSocket::bind(&local_addr).unwrap();
+    let socket = UdpSocket::bind(&local_addr).map_err(RsocksError::from)?;
     socket.connect(&remote_addr).map_err(RsocksError::from)?;
 
     // build query message

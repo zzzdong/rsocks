@@ -7,16 +7,16 @@ extern crate failure;
 #[macro_use]
 extern crate log;
 
-use log::LevelFilter;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
+// use std::time::Duration;
 
-use futures::{future, Sink, SinkExt, Stream, StreamExt};
-
+use futures::{future, Sink, Stream};
+use log::LevelFilter;
 use structopt::StructOpt;
-
 use tokio::codec::{BytesCodec, Framed, FramedParts};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::prelude::*;
 
 mod codecs;
 mod dns_resolver;
@@ -31,6 +31,8 @@ use crate::proto::socks5::*;
 
 type BytesFramed = Framed<TcpStream, BytesCodec>;
 type CmdFramed = Framed<TcpStream, CmdCodec>;
+
+// const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 async fn socks5_handshake(socket: TcpStream) -> Result<CmdFramed, RsocksError> {
     let (framed, mut stream) = Framed::new(socket, HandshakeCodec).into_future().await;
@@ -126,6 +128,7 @@ async fn socks_connect(
             let CmdRequest { address, port, .. } = req.clone();
             let reply = match e.kind() {
                 io::ErrorKind::ConnectionRefused => Reply::ConnectionRefused,
+                io::ErrorKind::TimedOut => Reply::HostUnreachable,
                 _ => Reply::CommandNotSupported,
             };
             let resp = CmdResponse::new(reply, address, port);
@@ -152,6 +155,8 @@ async fn socks_streaming(local: BytesFramed, remote: BytesFramed) -> Result<(), 
     let (l_sink, l_stream) = local.split();
     let (r_sink, r_stream) = remote.split();
 
+    trace!("streaming...");
+
     future::try_join(
         forward_data(l_stream, r_sink),
         forward_data(r_stream, l_sink),
@@ -169,6 +174,14 @@ async fn forward_data(
         let buf = item?;
         writer.send(buf.freeze()).await?;
     }
+
+    Ok(())
+}
+
+async fn socks_proxy(socket: TcpStream) -> Result<(), RsocksError> {
+    let handshaked = socks5_handshake(socket).await?;
+    let (s1, s2) = socks5_cmd(handshaked).await?;
+    socks_streaming(s1, s2).await?;
 
     Ok(())
 }
@@ -201,9 +214,9 @@ async fn main() -> Result<(), failure::Error> {
 
     builder.init();
 
-    let addr = opt.host.parse().unwrap();
+    let addr = opt.host.parse().expect("can not parse host");
 
-    let mut listener = TcpListener::bind(&addr).unwrap();
+    let mut listener = TcpListener::bind(&addr).expect(&format!("can not bind {}", addr));
 
     info!("listening on {}", addr);
 
@@ -211,9 +224,10 @@ async fn main() -> Result<(), failure::Error> {
         let (socket, _) = listener.accept().await.expect("accpet failed");
 
         tokio::spawn(async move {
-            let handshaked = socks5_handshake(socket).await.unwrap();
-            let (s1, s2) = socks5_cmd(handshaked).await.unwrap();
-            socks_streaming(s1, s2).await.unwrap();
+            match socks_proxy(socket).await {
+                Ok(_) => {}
+                Err(e) => error!("socks5 proxy error, {:?}", e),
+            }
         });
     }
 }
