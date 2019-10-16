@@ -1,5 +1,3 @@
-#![feature(async_await)]
-#![feature(async_closure)]
 #![recursion_limit = "128"]
 
 #[macro_use]
@@ -214,9 +212,9 @@ async fn main() -> Result<(), failure::Error> {
 
     builder.init();
 
-    let addr = opt.host.parse().expect("can not parse host");
+    let addr: SocketAddr = opt.host.parse().expect("can not parse host");
 
-    let mut listener = TcpListener::bind(&addr).expect(&format!("can not bind {}", addr));
+    let mut listener = TcpListener::bind(&addr).await.expect(&format!("can not bind {}", addr));
 
     info!("listening on {}", addr);
 

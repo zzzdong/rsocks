@@ -22,8 +22,8 @@ pub async fn dns_query(domain: &str) -> Result<IpAddr, RsocksError> {
     // let remote_addr: SocketAddr = "1.1.1.1:53".parse().unwrap();
     let local_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
 
-    let socket = UdpSocket::bind(&local_addr).map_err(RsocksError::from)?;
-    socket.connect(&remote_addr).map_err(RsocksError::from)?;
+    let socket = UdpSocket::bind(&local_addr).await?;
+    socket.connect(&remote_addr).await?;
 
     // build query message
     let curr_query_count = GLOBAL_DNS_QUERY_COUNT.fetch_add(1, Ordering::SeqCst);
