@@ -7,14 +7,14 @@ extern crate log;
 
 use std::io;
 use std::net::{IpAddr, SocketAddr};
-// use std::time::Duration;
 
 use futures::{future, Sink, Stream};
+use futures_util::sink::SinkExt;
+use futures_util::stream::StreamExt;
 use log::LevelFilter;
 use structopt::StructOpt;
-use tokio::codec::{BytesCodec, Framed, FramedParts};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::prelude::*;
+use tokio_util::codec::{BytesCodec, Framed, FramedParts};
 
 mod codecs;
 mod dns_resolver;
@@ -214,7 +214,9 @@ async fn main() -> Result<(), failure::Error> {
 
     let addr: SocketAddr = opt.host.parse().expect("can not parse host");
 
-    let mut listener = TcpListener::bind(&addr).await.expect(&format!("can not bind {}", addr));
+    let mut listener = TcpListener::bind(&addr)
+        .await
+        .unwrap_or_else(|e| panic!("can not bind {}, {:?}", addr, e));
 
     info!("listening on {}", addr);
 

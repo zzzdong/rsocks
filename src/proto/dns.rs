@@ -175,12 +175,12 @@ impl Header {
     pub fn to_bytes(&self) -> BytesMut {
         let mut buf = BytesMut::with_capacity(12);
 
-        buf.put_u16_be(self.id);
+        buf.put_u16(self.id);
         buf.put(&self.flag.to_bytes()[..]);
-        buf.put_u16_be(self.qd_count);
-        buf.put_u16_be(self.an_count);
-        buf.put_u16_be(self.ns_count);
-        buf.put_u16_be(self.ar_count);
+        buf.put_u16(self.qd_count);
+        buf.put_u16(self.an_count);
+        buf.put_u16(self.ns_count);
+        buf.put_u16(self.ar_count);
 
         buf
     }
@@ -342,8 +342,8 @@ impl Question {
 
     pub fn write_to(&self, buf: &mut BytesMut) {
         write_domain_name(buf, &self.qname);
-        buf.put_u16_be(u16::from(self.qtype));
-        buf.put_u16_be(u16::from(self.qclass));
+        buf.put_u16(u16::from(self.qtype));
+        buf.put_u16(u16::from(self.qclass));
     }
 }
 
@@ -361,7 +361,7 @@ pub fn write_domain_name(buf: &mut BytesMut, domain: &str) {
         buf.put(p.as_bytes());
     }
 
-    buf.put(0u8);
+    buf.put_u8(0u8);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

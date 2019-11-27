@@ -1,6 +1,6 @@
 use bytes::BytesMut;
 use nom::Offset;
-use tokio::codec::*;
+use tokio_util::codec::*;
 
 use crate::errors::*;
 use crate::parser::socks5::*;

@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use tokio::codec::*;
+use tokio_util::codec::*;
 
 use crate::errors::{parser_error, RsocksError};
 use crate::parser::dns::*;

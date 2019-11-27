@@ -7,9 +7,7 @@ pub enum RsocksError {
     #[fail(display = "Socks error: {}", msg)]
     SocksError { msg: String },
     #[fail(display = "Timeout error: {}", error)]
-    TimeoutError {
-        error: tokio::timer::timeout::Elapsed,
-    },
+    TimeoutError { error: tokio::time::Elapsed },
     #[fail(display = "DNS resolve error: {}", msg)]
     DNSError { msg: String },
 }
@@ -32,8 +30,8 @@ impl From<std::io::Error> for RsocksError {
     }
 }
 
-impl From<tokio::timer::timeout::Elapsed> for RsocksError {
-    fn from(err: tokio::timer::timeout::Elapsed) -> RsocksError {
+impl From<tokio::time::Elapsed> for RsocksError {
+    fn from(err: tokio::time::Elapsed) -> RsocksError {
         RsocksError::TimeoutError { error: err }
     }
 }

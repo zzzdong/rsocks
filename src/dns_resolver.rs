@@ -2,9 +2,12 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 
-use tokio::net::UdpFramed;
+use futures_util::future::FutureExt;
+use futures_util::sink::SinkExt;
+use futures_util::stream::StreamExt;
 use tokio::net::UdpSocket;
-use tokio::prelude::*;
+use tokio::time::timeout;
+use tokio_util::udp::UdpFramed;
 
 use crate::codecs::dns::*;
 use crate::errors::RsocksError;
@@ -32,16 +35,9 @@ pub async fn dns_query(domain: &str) -> Result<IpAddr, RsocksError> {
     // user framed to send
     let mut framed = UdpFramed::new(socket, MessageCodec);
 
-    framed
-        .send((msg, remote_addr))
-        .timeout(QUERY_TIMEOUT)
-        .await??;
+    timeout(QUERY_TIMEOUT, framed.send((msg, remote_addr))).await??;
 
-    let (msg, _) = framed
-        .next()
-        .map(|e| e.unwrap())
-        .timeout(QUERY_TIMEOUT)
-        .await??;
+    let (msg, _) = timeout(QUERY_TIMEOUT, framed.next().map(|e| e.unwrap())).await??;
 
     for record in &msg.answer {
         if record.type_ == QType::A && record.class == QClass::IN {

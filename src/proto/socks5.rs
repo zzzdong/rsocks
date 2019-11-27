@@ -299,7 +299,7 @@ impl CmdRequest {
             consts::SOCKS5_RESERVED,
         ]);
         self.address.write_buf(buf);
-        buf.put_u16_be(self.port);
+        buf.put_u16(self.port);
     }
 }
 
@@ -343,7 +343,7 @@ impl CmdResponse {
             consts::SOCKS5_RESERVED,
         ]);
         self.address.write_buf(buf);
-        buf.put_u16_be(self.port);
+        buf.put_u16(self.port);
     }
 }
 
