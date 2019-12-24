@@ -1,0 +1,48 @@
+// protoc proto/rsocks.proto --go_out=plugins=grpc:./
+
+syntax = "proto3";
+
+package rsocks;
+
+service rsocks {
+    rpc RsockStream(stream RsocksReq) returns (stream RsocksResp) {}
+}
+
+message RsocksReq {
+    message Connect {
+        oneof addr {
+            bytes ip = 1;
+            string domain = 2;
+        }
+        uint32 port = 3;
+    }
+
+    message Streaming {
+        bytes data = 1;
+    }
+    
+    oneof inner {
+        Connect connect = 1;
+        Streaming streaming = 2;
+    }
+}
+
+message RsocksResp {
+    message Connect {
+        uint32 reply = 1;
+        oneof addr {
+            bytes ip = 2;
+            string domain = 3;
+        }
+        uint32 port = 4;
+    }
+
+    message Streaming {
+        bytes data = 1;
+    }
+
+    oneof inner {
+        Connect connect = 1;
+        Streaming streaming = 2;
+    }
+}

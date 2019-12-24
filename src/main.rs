@@ -3,259 +3,274 @@
 #[macro_use]
 extern crate failure;
 #[macro_use]
-extern crate lazy_static;
-#[macro_use]
 extern crate log;
-#[macro_use]
-extern crate nom;
 
-use log::LevelFilter;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
+// use std::time::Duration;
 
-use futures::future::Either;
-
+use bytes::Bytes;
+use futures::{future, Sink, Stream};
+use log::LevelFilter;
 use structopt::StructOpt;
-
 use tokio::codec::{BytesCodec, Framed, FramedParts};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
-
-use trust_dns_resolver::AsyncResolver;
+use tonic::transport::Channel;
 
 mod codecs;
+mod dns_resolver;
 mod errors;
+mod parser;
 mod proto;
+mod transport;
 
 use crate::codecs::socks5::*;
 use crate::errors::*;
 use crate::proto::socks5::consts::*;
 use crate::proto::socks5::*;
+use crate::transport::*;
 
 type BytesFramed = Framed<TcpStream, BytesCodec>;
 type CmdFramed = Framed<TcpStream, CmdCodec>;
 
-lazy_static! {
-    // borrow from https://github.com/bluejekyll/trust-dns/blob/master/crates/resolver/examples/global_resolver.rs
-    // First we need to setup the global Resolver
-    static ref GLOBAL_DNS_RESOLVER: AsyncResolver = {
-        use std::sync::{Arc, Mutex, Condvar};
-        use std::thread;
+// const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-        // We'll be using this condvar to get the Resolver from the thread...
-        let pair = Arc::new((Mutex::new(None::<AsyncResolver>), Condvar::new()));
-        let pair2 = pair.clone();
+async fn socks5_handshake(socket: TcpStream) -> Result<CmdFramed, RsocksError> {
+    let (framed, mut stream) = Framed::new(socket, HandshakeCodec).into_future().await;
+    let req = match framed {
+        Some(req) => req,
+        None => return Err(socks_error("read request failed")),
+    }?;
 
-
-        // Spawn the runtime to a new thread...
-        //
-        // This thread will manage the actual resolution runtime
-        thread::spawn(move || {
-            // A runtime for this new thread
-            let mut runtime = tokio::runtime::current_thread::Runtime::new().expect("failed to launch Runtime");
-
-            // our platform independent future, result, see next blocks
-            let (resolver, bg) = {
-
-                // To make this independent, if targeting macOS, BSD, Linux, or Windows, we can use the system's configuration:
-                #[cfg(any(unix, windows))]
-                {
-                    // use the system resolver configuration
-                    AsyncResolver::from_system_conf().expect("Failed to create AsyncResolver")
-                }
-
-                // For other operating systems, we can use one of the preconfigured definitions
-                #[cfg(not(any(unix, windows)))]
-                {
-                    // Directly reference the config types
-                    use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
-
-                    // Get a new resolver with the google nameservers as the upstream recursive resolvers
-                    AsyncResolver::new(ResolverConfig::google(), ResolverOpts::default())
-                }
-            };
-
-            let &(ref lock, ref cvar) = &*pair2;
-            let mut started = lock.lock().unwrap();
-            *started = Some(resolver);
-            cvar.notify_one();
-            drop(started);
-
-            runtime.block_on(bg).expect("Failed to create DNS resolver");
-        });
-
-        // Wait for the thread to start up.
-        let &(ref lock, ref cvar) = &*pair;
-        let mut resolver = lock.lock().unwrap();
-        while resolver.is_none() {
-            resolver = cvar.wait(resolver).unwrap();
-        }
-
-        // take the started resolver
-        let resolver = std::mem::replace(&mut *resolver, None);
-
-        // set the global resolver
-        resolver.expect("resolver should not be none")
-    };
-}
-
-fn socks5_handshake(socket: TcpStream) -> impl Future<Item = CmdFramed, Error = RsocksError> {
-    Framed::new(socket, HandshakeCodec)
-        .into_future()
-        .map_err(|(e, _s)| e)
-        .and_then(|(r, s)| match r {
-            Some(req) => {
-                if req.methods.contains(&SOCKS5_AUTH_METHOD_NONE) {
-                    let resp = HandshakeResponse::new(SOCKS5_AUTH_METHOD_NONE);
-                    future::ok(s.send(resp))
-                } else {
-                    let resp = HandshakeResponse::new(SOCKS5_AUTH_METHOD_NONE);
-                    let f = s.send(resp).and_then(|_s| Ok(())).map_err(|_| ());
-                    tokio::spawn(f);
-                    future::err(socks_error("method not support"))
-                }
-            }
-            None => future::err(socks_error("read request failed")),
-        })
-        .and_then(|f| f)
-        .and_then(move |s| {
-            let FramedParts {
-                io,
-                read_buf,
-                write_buf,
-                ..
-            } = s.into_parts();
-
-            let mut new_parts = FramedParts::new(io, CmdCodec);
-
-            new_parts.write_buf = write_buf;
-            new_parts.read_buf = read_buf;
-
-            let cmd = Framed::from_parts(new_parts);
-            Ok(cmd)
-        })
-}
-
-fn socks5_cmd(
-    stream: CmdFramed,
-) -> impl Future<Item = (CmdFramed, TcpStream), Error = RsocksError> {
-    stream
-        .into_future()
-        .map_err(|(e, _s)| e)
-        .and_then(|(r, s)| match r {
-            Some(req) => {
-                debug!("cmd request: {:?} from {:?}", req, s);
-                let CmdRequest { address, port, .. } = req.clone();
-
-                // only support TCPConnect
-                match req.command {
-                    Command::TCPConnect => future::ok(socks_connect(s, req)),
-                    _ => {
-                        let resp = CmdResponse::new(Reply::CommandNotSupported, address, port);
-                        let f = s.send(resp).and_then(|_s| Ok(())).map_err(|_| ());
-                        tokio::spawn(f);
-                        future::err(socks_error("command not support"))
-                    }
-                }
-            }
-            None => future::err(socks_error("read request failed")),
-        })
-        .and_then(|s| s)
-        .and_then(move |(s, c, r)| s.send(r).map(|s| (s, c)))
-}
-
-fn socks_connect(
-    stream: CmdFramed,
-    req: CmdRequest,
-) -> impl Future<Item = (CmdFramed, TcpStream, CmdResponse), Error = RsocksError> {
-    resolve_addr(&req).and_then(move |a| {
-        let addr = SocketAddr::new(a, req.port);
-        trace!("try connect to {}", addr);
-
-        TcpStream::connect(&addr).then(move |r| match r {
-            Ok(c) => {
-                trace!("connected {:?}", req.address);
-                let CmdRequest { address, port, .. } = req.clone();
-                let resp = CmdResponse::new(Reply::Succeeded, address, port);
-                Ok((stream, c, resp))
-            }
-            Err(e) => {
-                let CmdRequest { address, port, .. } = req.clone();
-                let reply = match e.kind() {
-                    io::ErrorKind::ConnectionRefused => Reply::ConnectionRefused,
-
-                    _ => Reply::CommandNotSupported,
-                };
-                let resp = CmdResponse::new(reply, address, port);
-                let f = stream.send(resp).and_then(|_s| Ok(())).map_err(|_| ());
-                tokio::spawn(f);
-                Err(socks_error(format!(
-                    "connect {:?} failed, {:?}",
-                    req.address, e
-                )))
-            }
-        })
-    })
-}
-
-fn resolve_addr(req: &CmdRequest) -> impl Future<Item = IpAddr, Error = RsocksError> {
-    let req = req.clone();
-    match req.address {
-        Address::IPv4(ip) => Either::A(future::ok(IpAddr::V4(ip))),
-        Address::IPv6(ip) => Either::A(future::ok(IpAddr::V6(ip))),
-        Address::DomainName(ref dn) => Either::B(dns_resolve(dn.as_str())),
-        Address::Unknown(_t) => Either::A(future::err(socks_error("bad address"))),
+    if req.methods.contains(&SOCKS5_AUTH_METHOD_NONE) {
+        let resp = HandshakeResponse::new(SOCKS5_AUTH_METHOD_NONE);
+        stream.send(resp).await?;
+    } else {
+        let resp = HandshakeResponse::new(SOCKS5_AUTH_METHOD_NONE);
+        stream.send(resp).await?;
+        return Err(socks_error("method not support"));
     }
-}
 
-fn dns_resolve(domain: &str) -> impl Future<Item = IpAddr, Error = RsocksError> {
-    GLOBAL_DNS_RESOLVER
-        .lookup_ip(domain)
-        .map_err(RsocksError::from)
-        .and_then(|r| match r.iter().next() {
-            Some(a) => Ok(a),
-            None => Err(socks_error("dns lookup failed.")),
-        })
-}
-
-fn into_socks_streaming(
-    s: Framed<TcpStream, CmdCodec>,
-    c: TcpStream,
-) -> (BytesFramed, BytesFramed) {
     let FramedParts {
         io,
         read_buf,
         write_buf,
         ..
-    } = s.into_parts();
+    } = stream.into_parts();
+
+    let mut new_parts = FramedParts::new(io, CmdCodec);
+
+    new_parts.write_buf = write_buf;
+    new_parts.read_buf = read_buf;
+
+    let cmd = Framed::from_parts(new_parts);
+
+    Ok(cmd)
+}
+
+async fn socks5_cmd(stream: CmdFramed) -> Result<(BytesFramed, BytesFramed), RsocksError> {
+    let (framed, mut stream) = stream.into_future().await;
+
+    let req = match framed {
+        Some(req) => req,
+        None => return Err(socks_error("read request failed")),
+    }?;
+
+    debug!("cmd request: {:?} from {:?}", req, stream);
+    let CmdRequest { address, port, .. } = req.clone();
+
+    // only support TCPConnect
+    let (stream, outside) = match req.command {
+        Command::TCPConnect => socks_connect(stream, req).await?,
+        _ => {
+            let resp = CmdResponse::new(Reply::CommandNotSupported, address, port);
+            stream.send(resp).await?;
+            return Err(socks_error("command not support"));
+        }
+    };
+
+    let FramedParts {
+        io,
+        read_buf,
+        write_buf,
+        ..
+    } = stream.into_parts();
 
     let mut new_parts = FramedParts::new(io, BytesCodec::new());
 
     new_parts.write_buf = write_buf;
     new_parts.read_buf = read_buf;
 
-    let s1 = Framed::from_parts(new_parts);
+    let local = Framed::from_parts(new_parts);
+    let remote = Framed::new(outside, BytesCodec::new());
 
-    let s2 = Framed::new(c, BytesCodec::new());
-
-    (s1, s2)
+    Ok((local, remote))
 }
 
-fn socks_streaming(s1: BytesFramed, s2: BytesFramed) {
-    let (a_sink, a_stream) = s1.split();
-    let (b_sink, b_stream) = s2.split();
+async fn socks_connect(
+    mut local: CmdFramed,
+    req: CmdRequest,
+) -> Result<(CmdFramed, TcpStream), RsocksError> {
+    let addr = resolve_addr(&req).await?;
 
-    let f1 = b_stream
-        .map(|b| b.freeze())
-        .forward(a_sink)
-        .map_err(|e| error!("remote->local streaming error: {:?}", e));
+    let addr = SocketAddr::new(addr, req.port);
+    trace!("try connect to {}({:?})", addr, &req.address);
 
-    let f2 = a_stream
-        .map(|b| b.freeze())
-        .forward(b_sink)
-        .map_err(|e| error!("local->remotes streaming error: {:?}", e));
+    let socket = TcpStream::connect(&addr).await;
+    match socket {
+        Ok(s) => {
+            trace!("connected {:?}", req.address);
+            let CmdRequest { address, port, .. } = req.clone();
+            let resp = CmdResponse::new(Reply::Succeeded, address, port);
+            local.send(resp).await?;
+            Ok((local, s))
+        }
+        Err(e) => {
+            let CmdRequest { address, port, .. } = req.clone();
+            let reply = match e.kind() {
+                io::ErrorKind::ConnectionRefused => Reply::ConnectionRefused,
+                io::ErrorKind::TimedOut => Reply::HostUnreachable,
+                _ => Reply::CommandNotSupported,
+            };
+            let resp = CmdResponse::new(reply, address, port);
+            local.send(resp).await?;
+            Err(socks_error(format!(
+                "connect {:?} failed, {:?}",
+                req.address, e
+            )))
+        }
+    }
+}
 
-    tokio::spawn(f1.join(f2).map(|_| ()));
+async fn resolve_addr(req: &CmdRequest) -> Result<IpAddr, RsocksError> {
+    let req = req.clone();
+    match req.address {
+        Address::IPv4(ip) => Ok(IpAddr::V4(ip)),
+        Address::IPv6(ip) => Ok(IpAddr::V6(ip)),
+        Address::DomainName(ref dn) => dns_resolver::dns_query(&dn).await,
+        Address::Unknown(_t) => Err(socks_error("bad address")),
+    }
+}
+
+async fn socks_streaming(local: BytesFramed, remote: BytesFramed) -> Result<(), RsocksError> {
+    let (l_sink, l_stream) = local.split();
+    let (r_sink, r_stream) = remote.split();
+
+    trace!("streaming...");
+
+    future::try_join(
+        forward_data(l_stream, r_sink),
+        forward_data(r_stream, l_sink),
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn forward_data(
+    mut reader: impl Stream<Item = Result<bytes::BytesMut, io::Error>> + Unpin,
+    mut writer: impl Sink<bytes::Bytes, Error = io::Error> + Unpin,
+) -> Result<(), io::Error> {
+    while let Some(item) = reader.next().await {
+        let buf = item?;
+        writer.send(buf.freeze()).await?;
+    }
+
+    Ok(())
+}
+
+async fn socks_proxy(socket: TcpStream) -> Result<(), RsocksError> {
+    let handshaked = socks5_handshake(socket).await?;
+    let (s1, s2) = socks5_cmd(handshaked).await?;
+    socks_streaming(s1, s2).await?;
+
+    Ok(())
+}
+
+async fn socks_proxy2(socket: TcpStream, channel: Channel) -> Result<(), RsocksError> {
+    use transport::rsocks::rsocks_resp;
+    use transport::rsocks::RsocksReq;
+
+    trace!("got connect from {:?}", socket.peer_addr());
+
+    let (framed, mut local_stream) = Framed::new(socket, SocksCodec::new()).into_future().await;
+
+    debug!("got first frame {:?}", local_stream);
+
+    let req = match framed {
+        Some(Ok(SocksRequest::Handshake(h))) => h,
+        Some(Err(e)) => panic!("read handshake error, {:?}", e),
+        None => return Err(socks_error("read handshake request failed")),
+        _ => unreachable!(),
+    };
+
+    if req.methods.contains(&SOCKS5_AUTH_METHOD_NONE) {
+        let resp = SocksResponse::Handshake(HandshakeResponse::new(SOCKS5_AUTH_METHOD_NONE));
+        local_stream.send(resp).await?;
+    } else {
+        let resp = SocksResponse::Handshake(HandshakeResponse::new(SOCKS5_AUTH_METHOD_NONE));
+        local_stream.send(resp).await?;
+        return Err(socks_error("method not support"));
+    }
+
+    let (mut l_sink, l_stream) = local_stream.split();
+
+    let request = tonic::Request::new(l_stream.map(|r| {
+        trace!("output streaming...");
+        match r {
+            Ok(SocksRequest::Handshake(c)) => unreachable!(),
+            Ok(SocksRequest::Cmd(c)) => RsocksReq::from(c),
+            Ok(SocksRequest::Stream(s)) => {
+                trace!("output streaming len={}", s.len());
+                RsocksReq::from(s)
+            }
+            Err(e) => {
+                panic!("l_stream read error: {:?}", e);
+                // error!("l_stream read error: {:?}", e);
+                // RsocksReq::from(Bytes::with_capacity(0))
+            }
+        }
+    }));
+
+    let mut stream = RsocksClient::new(channel);
+
+    let response = stream.rsock_stream(request).await.unwrap();
+
+    let mut inbound = response.into_inner();
+
+    let mut total_len: usize = 0;
+
+    while let Some(msg) = inbound
+        .message()
+        .await
+        .map_err(|e| socks_error(format!("read grpc failed, {:?}", e)))?
+    {
+        if let Some(inner) = msg.inner {
+            trace!("input streaming, total_len={}", total_len);
+
+            let resp = match inner {
+                rsocks_resp::Inner::Connect(c) => {
+                    trace!("input connect=> {:?}", c);
+                    SocksResponse::Cmd(c.into())
+                }
+                rsocks_resp::Inner::Streaming(s) => {
+                    total_len += s.data.len();
+                    trace!(
+                        "input streaming=> len={:?}, total={}",
+                        s.data.len(),
+                        total_len
+                    );
+                    SocksResponse::Stream(s.into())
+                }
+            };
+
+            l_sink.send(resp).await.unwrap();
+            l_sink.flush().await.unwrap()
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(StructOpt, Debug)]
@@ -269,7 +284,8 @@ struct Opt {
     host: String,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<(), failure::Error> {
     let opt = Opt::from_args();
 
     let mut builder = env_logger::Builder::new();
@@ -285,31 +301,27 @@ fn main() {
 
     builder.init();
 
-    let addr = opt.host.parse().unwrap();
-    let listener = TcpListener::bind(&addr).unwrap();
+    let addr: SocketAddr = opt.host.parse().expect("can not parse host");
+
+    let mut listener = TcpListener::bind(&addr)
+        .await
+        .expect(&format!("can not bind {}", addr));
 
     info!("listening on {}", addr);
 
-    let server = listener
-        .incoming()
-        .for_each(|socket| {
-            info!("accepted socket from {:?}", socket.peer_addr().unwrap());
+    let channel = Channel::from_static("http://localhost:1089")
+        .connect()
+        .await?;
 
-            let f = socks5_handshake(socket)
-                .and_then(socks5_cmd)
-                .and_then(|(s, c)| {
-                    let (s1, s2) = into_socks_streaming(s, c);
-                    socks_streaming(s1, s2);
-                    Ok(())
-                })
-                .map(|_| ())
-                .map_err(|e| error!("error = {:?}", e));
-            tokio::spawn(f);
-            Ok(())
-        })
-        .map_err(|err| {
-            error!("accept error = {:?}", err);
+    loop {
+        let (socket, _) = listener.accept().await.expect("accpet failed");
+
+        let channel_cloned = channel.clone();
+        tokio::spawn(async move {
+            match socks_proxy2(socket, channel_cloned).await {
+                Ok(_) => {}
+                Err(e) => error!("socks5 proxy error, {:?}", e),
+            }
         });
-
-    tokio::run(server);
+    }
 }
