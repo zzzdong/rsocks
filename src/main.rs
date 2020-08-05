@@ -1,7 +1,6 @@
 #![recursion_limit = "128"]
 
-#[macro_use]
-extern crate failure;
+extern crate anyhow;
 #[macro_use]
 extern crate log;
 
@@ -196,7 +195,7 @@ struct Opt {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), failure::Error> {
+async fn main() -> Result<(), anyhow::Error> {
     let opt = Opt::from_args();
 
     let mut builder = env_logger::Builder::new();
@@ -214,7 +213,7 @@ async fn main() -> Result<(), failure::Error> {
 
     let addr: SocketAddr = opt.host.parse().expect("can not parse host");
 
-    let mut listener = TcpListener::bind(&addr)
+    let mut listener = TcpListener::bind(addr)
         .await
         .unwrap_or_else(|e| panic!("can not bind {}, {:?}", addr, e));
 

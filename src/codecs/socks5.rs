@@ -1,4 +1,4 @@
-use bytes::BytesMut;
+use bytes::{buf::Buf, BytesMut};
 use nom::Offset;
 use tokio_util::codec::*;
 
@@ -27,14 +27,13 @@ impl Decoder for HandshakeCodec {
         };
 
         trace!("socks5 decode; frame={:?}", f);
-        buf.split_to(consumed);
+        buf.advance(consumed);
 
         Ok(Some(f))
     }
 }
 
-impl Encoder for HandshakeCodec {
-    type Item = HandshakeResponse;
+impl Encoder<HandshakeResponse> for HandshakeCodec {
     type Error = RsocksError;
 
     fn encode(&mut self, packet: HandshakeResponse, buf: &mut BytesMut) -> Result<(), RsocksError> {
@@ -63,14 +62,13 @@ impl Decoder for CmdCodec {
         };
 
         trace!("socks5 decode; frame={:?}", f);
-        buf.split_to(consumed);
+        buf.advance(consumed);
 
         Ok(Some(f))
     }
 }
 
-impl Encoder for CmdCodec {
-    type Item = CmdResponse;
+impl Encoder<CmdResponse> for CmdCodec {
     type Error = RsocksError;
 
     fn encode(&mut self, packet: CmdResponse, buf: &mut BytesMut) -> Result<(), RsocksError> {

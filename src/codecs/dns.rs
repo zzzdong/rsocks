@@ -21,8 +21,7 @@ impl Decoder for MessageCodec {
     }
 }
 
-impl Encoder for MessageCodec {
-    type Item = Message;
+impl Encoder<Message> for MessageCodec {
     type Error = RsocksError;
 
     fn encode(&mut self, msg: Message, buf: &mut BytesMut) -> Result<(), RsocksError> {

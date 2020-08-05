@@ -10,7 +10,7 @@ use tokio::time::timeout;
 use tokio_util::udp::UdpFramed;
 
 use crate::codecs::dns::*;
-use crate::errors::RsocksError;
+use crate::errors::{dns_error, RsocksError};
 use crate::proto::dns::*;
 
 // const MAX_DATAGRAM_SIZE: usize = 65_507;
@@ -18,11 +18,12 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(3);
 
 static GLOBAL_DNS_QUERY_COUNT: AtomicU16 = AtomicU16::new(0);
 
+const DNS_SEVER_ADDR_DROPBOX: &str = "1.1.1.1:53";
+const DNS_SEVER_ADDR_GOOGLE: &str = "8.8.8.8:53";
+const DNS_SEVER_ADDR_114: &str = "114.114.114.114:53";
+
 pub async fn dns_query(domain: &str) -> Result<IpAddr, RsocksError> {
-    let remote_addr: SocketAddr = "114.114.114.114:53".parse().unwrap();
-    // let remote_addr: SocketAddr = "182.254.116.116:53".parse().unwrap();
-    // let remote_addr: SocketAddr = "8.8.8.8:53".parse().unwrap();
-    // let remote_addr: SocketAddr = "1.1.1.1:53".parse().unwrap();
+    let remote_addr: SocketAddr = DNS_SEVER_ADDR_GOOGLE.parse().unwrap();
     let local_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
 
     let socket = UdpSocket::bind(&local_addr).await?;
@@ -32,7 +33,7 @@ pub async fn dns_query(domain: &str) -> Result<IpAddr, RsocksError> {
     let curr_query_count = GLOBAL_DNS_QUERY_COUNT.fetch_add(1, Ordering::SeqCst);
     let msg = Message::new_query(curr_query_count, domain);
 
-    // user framed to send
+    // use framed to send
     let mut framed = UdpFramed::new(socket, MessageCodec);
 
     timeout(QUERY_TIMEOUT, framed.send((msg, remote_addr))).await??;
@@ -47,7 +48,5 @@ pub async fn dns_query(domain: &str) -> Result<IpAddr, RsocksError> {
         }
     }
 
-    Err(RsocksError::DNSError {
-        msg: "dns failed".to_string(),
-    })
+    Err(dns_error("dns lookup failed"))
 }
