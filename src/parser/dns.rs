@@ -16,7 +16,7 @@ fn bit_flag(b: u8) -> bool {
 }
 
 fn take_4_bits(input: &[u8]) -> IResult<&[u8], u64> {
-    bits::<_, _, (_, _), _, _>(take_bits(4usize))(input)
+    bits(take_bits::<_, _, _, nom::error::Error<_>>(4usize))(input)
 }
 
 pub struct Parser<'a> {
@@ -39,16 +39,17 @@ impl<'a> Parser<'a> {
 }
 
 fn parse_flag(input: &[u8]) -> IResult<&[u8], Flag> {
-    let (input, (qr, op, aa, tc, rd, ra, z, rc)) = bits::<_, _, (_, _), _, _>(tuple((
-        take_bits(1usize),
-        take_bits(4usize),
-        take_bits(1usize),
-        take_bits(1usize),
-        take_bits(1usize),
-        take_bits(1usize),
-        take_bits(3usize),
-        take_bits(4usize),
-    )))(input)?;
+    let (input, (qr, op, aa, tc, rd, ra, z, rc)) =
+        bits::<_, _, nom::error::Error<_>, _, _>(tuple((
+            take_bits(1usize),
+            take_bits(4usize),
+            take_bits(1usize),
+            take_bits(1usize),
+            take_bits(1usize),
+            take_bits(1usize),
+            take_bits(3usize),
+            take_bits(4usize),
+        )))(input)?;
     let _: u8 = z;
 
     let flag = Flag {

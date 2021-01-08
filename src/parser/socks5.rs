@@ -148,7 +148,10 @@ mod test {
             let req = parse_handshake_request(&buf);
             assert_eq!(
                 req,
-                Err(nom::Err::Error((&buf[..], nom::error::ErrorKind::Tag)))
+                Err(nom::Err::Error(nom::error::Error::new(
+                    &buf[..],
+                    nom::error::ErrorKind::Tag
+                )))
             );
         }
 
@@ -161,14 +164,20 @@ mod test {
             let req = parse_handshake_request(&buf);
             assert_eq!(
                 req,
-                Err(nom::Err::Error((empty_buf, nom::error::ErrorKind::Eof)))
+                Err(nom::Err::Error(nom::error::Error::new(
+                    empty_buf,
+                    nom::error::ErrorKind::Eof
+                )))
             );
 
             let buf = vec![0x05, 0x05, 0x01];
             let req = parse_handshake_request(&buf);
             assert_eq!(
                 req,
-                Err(nom::Err::Error((empty_buf, nom::error::ErrorKind::Eof)))
+                Err(nom::Err::Error(nom::error::Error::new(
+                    empty_buf,
+                    nom::error::ErrorKind::Eof
+                )))
             );
         }
     }
@@ -220,7 +229,10 @@ mod test {
             let req = parse_cmd_request(&buf);
             assert_eq!(
                 req,
-                Err(nom::Err::Error((&buf[3..], nom::error::ErrorKind::OneOf)))
+                Err(nom::Err::Error(nom::error::Error::new(
+                    &buf[3..],
+                    nom::error::ErrorKind::OneOf
+                )))
             );
         }
     }

@@ -9,7 +9,7 @@ pub enum RsocksError {
     #[error("Socks error: {}", msg)]
     SocksError { msg: String },
     #[error("Timeout error: {}", 0)]
-    TimeoutError(#[from] tokio::time::Elapsed),
+    TimeoutError(#[from] tokio::time::error::Elapsed),
     #[error("DNS resolve error: {}", msg)]
     DNSError { msg: String },
 }

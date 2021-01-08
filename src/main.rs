@@ -213,7 +213,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let addr: SocketAddr = opt.host.parse().expect("can not parse host");
 
-    let mut listener = TcpListener::bind(addr)
+    let listener = TcpListener::bind(addr)
         .await
         .unwrap_or_else(|e| panic!("can not bind {}, {:?}", addr, e));
 
