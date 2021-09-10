@@ -6,7 +6,6 @@ use nom::IResult;
 use nom::{
     branch::alt,
     bytes::streaming::{tag, take},
-    character::streaming::one_of,
     multi::count,
     number::complete::{be_u16, be_u8},
 };
@@ -70,19 +69,10 @@ fn read_domain(input: &[u8]) -> IResult<&[u8], Address> {
     ))
 }
 
-fn read_addr_type(i: &[u8]) -> IResult<&[u8], char> {
-    one_of([
-        consts::SOCKS5_ADDR_IPV4,
-        consts::SOCKS5_ADDR_IPV6,
-        consts::SOCKS5_ADDR_DOMAINNAME,
-    ])(i)
-}
-
 fn read_addr(input: &[u8]) -> IResult<&[u8], Address> {
-    let (i, t) = read_addr_type(input)?;
-    let t = AddressType::from_byte(t as u8);
+    let (i, t) = take(1usize)(input)?;
 
-    match t {
+    match AddressType::from_byte(t[0]) {
         AddressType::IPv4 => read_ipv4(i),
         AddressType::IPv6 => read_ipv6(i),
         AddressType::Domain => read_domain(i),
@@ -98,7 +88,7 @@ fn reserver_byte(input: &[u8]) -> IResult<&[u8], u8> {
     tag([consts::SOCKS5_RESERVED])(input).map(|(i, b)| (i, b[0]))
 }
 
-fn unknow_cmd(input: &[u8]) -> IResult<&[u8], Command> {
+fn unknown_cmd(input: &[u8]) -> IResult<&[u8], Command> {
     Ok((input, Command::OtherCommand(input[0])))
 }
 
