@@ -1,19 +1,16 @@
 #![recursion_limit = "128"]
 
-extern crate anyhow;
-#[macro_use]
-extern crate log;
-
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 
 use futures::{future, Sink, Stream};
 use futures_util::sink::SinkExt;
 use futures_util::stream::StreamExt;
-use log::LevelFilter;
 use structopt::StructOpt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::codec::{BytesCodec, Framed, FramedParts};
+use tracing::{debug, error, info, trace, Instrument};
+use tracing_subscriber::util::SubscriberInitExt;
 
 mod codecs;
 mod dns_resolver;
@@ -38,12 +35,10 @@ async fn socks5_handshake(socket: TcpStream) -> Result<CmdFramed, RsocksError> {
         None => return Err(socks_error("read request failed")),
     }?;
 
-    if req.methods.contains(&SOCKS5_AUTH_METHOD_NONE) {
-        let resp = HandshakeResponse::new(SOCKS5_AUTH_METHOD_NONE);
-        stream.send(resp).await?;
-    } else {
-        let resp = HandshakeResponse::new(SOCKS5_AUTH_METHOD_NONE);
-        stream.send(resp).await?;
+    let resp = HandshakeResponse::new(SOCKS5_AUTH_METHOD_NONE);
+    stream.send(resp).await?;
+
+    if !req.methods.contains(&SOCKS5_AUTH_METHOD_NONE) {
         return Err(socks_error("method not support"));
     }
 
@@ -143,7 +138,7 @@ async fn resolve_addr(req: &CmdRequest) -> Result<IpAddr, RsocksError> {
     match req.address {
         Address::IPv4(ip) => Ok(IpAddr::V4(ip)),
         Address::IPv6(ip) => Ok(IpAddr::V6(ip)),
-        Address::DomainName(ref dn) => dns_resolver::dns_query(&dn).await,
+        Address::DomainName(ref dn) => dns_resolver::dns_query(dn).await,
         Address::Unknown(_t) => Err(socks_error("bad address")),
     }
 }
@@ -195,23 +190,22 @@ struct Opt {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
     let opt = Opt::from_args();
 
-    let mut builder = env_logger::Builder::new();
+    let addr: SocketAddr = opt.host.parse().expect("can not parse host");
 
     let level = match opt.verbose {
-        0 => LevelFilter::Warn,
-        1 => LevelFilter::Info,
-        2 => LevelFilter::Debug,
-        _ => LevelFilter::Trace,
+        0 => "warn",
+        1 => "info",
+        2 => "debug",
+        _ => "trace",
     };
 
-    builder.filter_module("rsocks", level);
-
-    builder.init();
-
-    let addr: SocketAddr = opt.host.parse().expect("can not parse host");
+    tracing_subscriber::fmt()
+        .with_env_filter(format!("rsocks={}", level))
+        .finish()
+        .init();
 
     let listener = TcpListener::bind(addr)
         .await
@@ -220,13 +214,16 @@ async fn main() -> Result<(), anyhow::Error> {
     info!("listening on {}", addr);
 
     loop {
-        let (socket, _) = listener.accept().await.expect("accpet failed");
+        let (socket, remote_addr) = listener.accept().await.expect("accpet failed");
 
-        tokio::spawn(async move {
-            match socks_proxy(socket).await {
-                Ok(_) => {}
-                Err(e) => error!("socks5 proxy error, {:?}", e),
+        tokio::spawn(
+            async {
+                match socks_proxy(socket).await {
+                    Ok(_) => {}
+                    Err(e) => error!("socks5 proxy error, {:?}", e),
+                }
             }
-        });
+            .instrument(tracing::info_span!("conn", %remote_addr)),
+        );
     }
 }

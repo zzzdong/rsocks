@@ -31,7 +31,7 @@ impl<'a> Parser<'a> {
     pub fn parse(&self) -> Result<Message, RsocksError> {
         match parse_message(self.packet) {
             Ok((_, m)) => Ok(m),
-            Err(e) => Err(RsocksError::ParserError {
+            Err(e) => Err(RsocksError::Parser {
                 msg: format!("dns parser error: {:?}", e),
             }),
         }

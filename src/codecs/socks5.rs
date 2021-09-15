@@ -1,6 +1,7 @@
 use bytes::{buf::Buf, BytesMut};
 use nom::Offset;
 use tokio_util::codec::*;
+use tracing::trace;
 
 use crate::errors::*;
 use crate::parser::socks5::*;
