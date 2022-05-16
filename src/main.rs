@@ -3,10 +3,11 @@
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 
+use bytes::BytesMut;
+use clap::Parser;
 use futures::{future, Sink, Stream};
 use futures_util::sink::SinkExt;
 use futures_util::stream::StreamExt;
-use structopt::StructOpt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::codec::{BytesCodec, Framed, FramedParts};
 use tracing::{debug, error, info, trace, Instrument};
@@ -87,7 +88,7 @@ async fn socks5_cmd(stream: CmdFramed) -> Result<(BytesFramed, BytesFramed), Rso
         ..
     } = stream.into_parts();
 
-    let mut new_parts = FramedParts::new(io, BytesCodec::new());
+    let mut new_parts = FramedParts::new::<BytesMut>(io, BytesCodec::new());
 
     new_parts.write_buf = write_buf;
     new_parts.read_buf = read_buf;
@@ -178,20 +179,20 @@ async fn socks_proxy(socket: TcpStream) -> Result<(), RsocksError> {
     Ok(())
 }
 
-#[derive(StructOpt, Debug)]
-struct Opt {
+#[derive(Parser, Debug)]
+struct Args {
     // The number of occurences of the `v/verbose` flag
     /// Verbose mode (-v, -vv, -vvv, etc.)
-    #[structopt(short = "v", long = "verbose", parse(from_occurrences))]
+    #[clap(short, long, parse(from_occurrences))]
     verbose: u8,
     /// Host to listen on
-    #[structopt(long = "host", default_value = "0.0.0.0:1080")]
+    #[clap(default_value = "0.0.0.0:1080")]
     host: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-    let opt = Opt::from_args();
+    let opt = Args::parse();
 
     let addr: SocketAddr = opt.host.parse().expect("can not parse host");
 
