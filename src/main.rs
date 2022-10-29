@@ -183,10 +183,10 @@ async fn socks_proxy(socket: TcpStream) -> Result<(), RsocksError> {
 struct Args {
     // The number of occurences of the `v/verbose` flag
     /// Verbose mode (-v, -vv, -vvv, etc.)
-    #[clap(short, long, parse(from_occurrences))]
+    #[arg(short, action = clap::ArgAction::Count)]
     verbose: u8,
     /// Host to listen on
-    #[clap(default_value = "0.0.0.0:1080")]
+    #[arg(long, default_value = "localhost:1080")]
     host: String,
 }
 
