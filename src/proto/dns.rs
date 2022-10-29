@@ -143,7 +143,7 @@ impl WriteBuf for Message {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Header {
     pub id: u16,
     pub flag: Flag,
@@ -186,7 +186,7 @@ impl Header {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Flag {
     pub qr: QR,
     pub op: OpCode,
@@ -238,7 +238,7 @@ impl Flag {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum QR {
     Query,
     Reply,
@@ -263,7 +263,7 @@ impl From<u8> for QR {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OpCode {
     Query,
     IQuery,
@@ -290,7 +290,7 @@ impl From<u8> for OpCode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RCode {
     NoError,
     FormatError,
@@ -324,7 +324,7 @@ impl From<u8> for RCode {
 }
 
 /// Question Section
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Question {
     pub qname: String,
     pub qtype: QType,
@@ -364,7 +364,7 @@ pub fn write_domain_name(buf: &mut BytesMut, domain: &str) {
     buf.put_u8(0u8);
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QType {
     A,
     NS,
@@ -436,7 +436,7 @@ impl From<QType> for u16 {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QClass {
     IN,
     CS,

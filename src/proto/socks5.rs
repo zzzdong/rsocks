@@ -38,13 +38,13 @@ pub mod consts {
     pub const SOCKS5_REPLY_ADDRESS_TYPE_NOT_SUPPORTED: u8 = 0x08;
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Version {
     V5,
     Unknown(u8),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     TCPConnect,
     TCPBind,
@@ -84,7 +84,7 @@ impl From<Command> for u8 {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reply {
     Succeeded,
     GeneralFailure,
@@ -142,7 +142,7 @@ impl From<Reply> for u8 {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AddressType {
     IPv4,
     IPv6,
@@ -167,7 +167,7 @@ impl From<u8> for AddressType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Address {
     IPv4(Ipv4Addr),
     IPv6(Ipv6Addr),
@@ -210,7 +210,7 @@ impl WriteBuf for Address {
 /// | 5  |    1     | 1 to 255 |
 /// +----+----------+----------|
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HandshakeRequest {
     pub methods: Vec<u8>,
 }
@@ -241,7 +241,7 @@ impl WriteBuf for HandshakeRequest {
 /// | 1  |   1    |
 /// +----+--------+
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HandshakeResponse {
     pub chosen_method: u8,
 }
@@ -273,7 +273,7 @@ impl WriteBuf for HandshakeResponse {
 /// | 1  |  1  | X'00' |  1   | Variable |    2     |
 /// +----+-----+-------+------+----------+----------+
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CmdRequest {
     /// SOCKS5 command
     pub command: Command,
@@ -318,7 +318,7 @@ impl WriteBuf for CmdRequest {
 /// | 1  |  1  | X'00' |  1   | Variable |    2     |
 /// +----+-----+-------+------+----------+----------+
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CmdResponse {
     /// SOCKS5 reply
     pub reply: Reply,

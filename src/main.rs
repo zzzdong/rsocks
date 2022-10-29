@@ -3,13 +3,12 @@
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 
-use bytes::BytesMut;
 use clap::Parser;
 use futures::{future, Sink, Stream};
 use futures_util::sink::SinkExt;
 use futures_util::stream::StreamExt;
 use tokio::net::{TcpListener, TcpStream};
-use tokio_util::codec::{BytesCodec, Framed, FramedParts};
+use tokio_util::codec::{BytesCodec, Framed};
 use tracing::{debug, error, info, trace, Instrument};
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -30,11 +29,12 @@ type CmdFramed = Framed<TcpStream, CmdCodec>;
 // const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 async fn socks5_handshake(socket: TcpStream) -> Result<CmdFramed, RsocksError> {
-    let (framed, mut stream) = Framed::new(socket, HandshakeCodec).into_future().await;
-    let req = match framed {
-        Some(req) => req,
-        None => return Err(socks_error("read request failed")),
-    }?;
+    let mut stream = Framed::new(socket, HandshakeCodec);
+
+    let req = stream
+        .next()
+        .await
+        .ok_or_else(|| socks_error("read handshake failed"))??;
 
     let resp = HandshakeResponse::new(SOCKS5_AUTH_METHOD_NONE);
     stream.send(resp).await?;
@@ -43,32 +43,19 @@ async fn socks5_handshake(socket: TcpStream) -> Result<CmdFramed, RsocksError> {
         return Err(socks_error("method not support"));
     }
 
-    let FramedParts {
-        io,
-        read_buf,
-        write_buf,
-        ..
-    } = stream.into_parts();
+    let stream = stream.map_codec(|_| CmdCodec);
 
-    let mut new_parts = FramedParts::new(io, CmdCodec);
-
-    new_parts.write_buf = write_buf;
-    new_parts.read_buf = read_buf;
-
-    let cmd = Framed::from_parts(new_parts);
-
-    Ok(cmd)
+    Ok(stream)
 }
 
-async fn socks5_cmd(stream: CmdFramed) -> Result<(BytesFramed, BytesFramed), RsocksError> {
-    let (framed, mut stream) = stream.into_future().await;
+async fn socks5_cmd(mut stream: CmdFramed) -> Result<(BytesFramed, BytesFramed), RsocksError> {
+    let req = stream
+        .next()
+        .await
+        .ok_or_else(|| socks_error("read request failed"))??;
 
-    let req = match framed {
-        Some(req) => req,
-        None => return Err(socks_error("read request failed")),
-    }?;
+    debug!("cmd request: {:?}", req);
 
-    debug!("cmd request: {:?} from {:?}", req, stream);
     let CmdRequest { address, port, .. } = req.clone();
 
     // only support TCPConnect
@@ -81,19 +68,7 @@ async fn socks5_cmd(stream: CmdFramed) -> Result<(BytesFramed, BytesFramed), Rso
         }
     };
 
-    let FramedParts {
-        io,
-        read_buf,
-        write_buf,
-        ..
-    } = stream.into_parts();
-
-    let mut new_parts = FramedParts::new::<BytesMut>(io, BytesCodec::new());
-
-    new_parts.write_buf = write_buf;
-    new_parts.read_buf = read_buf;
-
-    let local = Framed::from_parts(new_parts);
+    let local = stream.map_codec(|_| BytesCodec::new());
     let remote = Framed::new(outside, BytesCodec::new());
 
     Ok((local, remote))
